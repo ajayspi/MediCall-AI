@@ -1,0 +1,14 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "backend/Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+[env]
+ENVIRONMENT = "production"
+DEBUG = "false"
+LOG_LEVEL = "info"
