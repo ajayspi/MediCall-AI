@@ -1,5 +1,5 @@
 {
-  "name": "talkbyte-frontend",
+  "name": "medicall-ai-frontend",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -12,15 +12,13 @@
     "next": "16.0.0",
     "react": "19.0.0",
     "react-dom": "19.0.0",
-    "@supabase/supabase-js": "^2.39.0",
     "@tanstack/react-query": "^5.17.0",
     "zustand": "^4.4.0",
     "recharts": "^2.10.0",
     "date-fns": "^3.0.0",
     "lucide-react": "^0.300.0",
     "clsx": "^2.1.0",
-    "tailwind-merge": "^2.2.0",
-    "shadcn-ui": "^0.8.0"
+    "tailwind-merge": "^2.2.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

@@ -3,16 +3,14 @@
   "devCommand": "npm run dev",
   "installCommand": "npm install",
   "framework": "nextjs",
-  "regions": ["syd1"],
+  "regions": ["bom1"],
   "functions": {
     "src/app/**/*.tsx": {
       "maxDuration": 30
     }
   },
   "env": {
-    "NEXT_PUBLIC_BACKEND_URL": "@talkbyte-backend-url",
-    "NEXT_PUBLIC_SUPABASE_URL": "@supabase-url",
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "@supabase-anon-key",
+    "NEXT_PUBLIC_BACKEND_URL": "@medicall-backend-url",
     "NEXT_PUBLIC_ENVIRONMENT": "production",
     "NEXT_PUBLIC_DEBUG": "false"
   }

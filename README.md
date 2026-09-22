@@ -1,82 +1,102 @@
-# TalkByte AI — Restaurant Voice Ordering System
+# MediCall AI — Medical Call AI for India
 
-AI phone ordering system for Australian restaurants. Caller rings → AI answers → takes order → sends SMS payment link → pushes to POS.
+**Multi-language voice AI for medical call centers** — Hindi, Tamil, Telugu, Bengali, English. Local PostgreSQL + pgvector, Razorpay/PhonePe/Cashfree, Exotel/Knowlarity/Twilio India.
 
 ## Architecture
 
 ```
-Telnyx → LiveKit Agents → Deepgram Flux STT → GPT-4.1 → ElevenLabs TTS
-                                    ↓
-                              Supabase (Postgres + pgvector)
-                                    ↓
-                              Stripe Payment Links + Square POS
+Exotel/Knowlarity/Twilio India → LiveKit SIP → LiveKit Agents
+                                              ↓
+        ┌───────────────────────┐  ┌───────────────────────┐
+        │   Deepgram STT        │→ │      GPT-4.1          │
+        │ (hi-IN, ta-IN, te-IN, │  │  Medical Prompt       │
+        │  bn-IN, en-IN)        │  │  (Structured Outputs) │
+        └───────────────────────┘  └───────────────────────┘
+                                              ↓
+                                    ┌───────────────────────┐
+                                    │   ElevenLabs TTS      │
+                                    │ (Indian Voices)       │
+                                    └───────────────────────┘
+                                              ↓
+                              Medical Logic (Triage/Appointment/Prescription)
+                                              ↓
+                              Local PostgreSQL + pgvector (RAG)
+                                              ↓
+                              Razorpay / PhonePe / Cashfree (Payments)
 ```
 
 ## Tech Stack
 
 | Layer | Choice |
 |-------|--------|
-| Telephony | Telnyx ($0.018/min AU) |
+| Telephony | Exotel + Knowlarity + Twilio India |
 | Voice Orchestration | LiveKit Agents |
-| STT | Deepgram Flux (<70ms TTFT) |
+| STT | Deepgram Nova-3 (hi-IN, ta-IN, te-IN, bn-IN, en-IN) |
 | LLM | GPT-4.1 (Structured Outputs) |
-| TTS | ElevenLabs |
+| TTS | ElevenLabs (Indian Voices) |
 | Backend | FastAPI + Python 3.12 |
 | Frontend | Next.js 16 (App Router) + React 19 |
-| Database | Supabase (Postgres 16 + pgvector) |
-| Cache/Queue | Upstash Redis + Celery |
-| Payments | Stripe Payment Links |
-| POS | Square (primary), Lightspeed/Kounta (Phase 2) |
+| Database | PostgreSQL 16 + pgvector (Local) |
+| Cache/Queue | Redis + Celery |
+| Payments | Razorpay + PhonePe + Cashfree |
+| EHR Integration | Custom adapters (Petpooja/Posist) |
 | Deployment | Railway (backend) + Vercel (frontend) |
 
 ## Project Structure
 
 ```
-talkbyte/
+medicall-ai/
+├── .github/                    # GitHub workflows
+├── .opencode/                  # Specs & configs
+│   └── spec-micc-india.md      # Full spec
 ├── backend/
 │   ├── main.py                 # FastAPI entry
 │   ├── requirements.txt
 │   ├── Dockerfile
-│   ├── supabase_schema.sql     # Database schema
+│   ├── postgres_schema.sql     # Medical DB schema
+│   ├── .env.example
 │   └── app/
-│       ├── api/                # FastAPI routes
-│       │   ├── voice.py        # Telnyx webhook + LiveKit
-│       │   ├── orders.py       # Order CRUD
-│       │   ├── restaurants.py  # Restaurant management
-│       │   ├── payments.py     # Stripe + payment links
-│       │   └── admin.py        # Admin panel endpoints
-│       ├── services/
-│       │   ├── livekit_agent.py
-│       │   ├── stt.py          # Deepgram Flux
-│       │   ├── tts.py          # ElevenLabs streaming
-│       │   ├── llm.py          # GPT-4.1 with functions
-│       │   ├── rag.py          # pgvector menu search
-│       │   ├── pos/            # POS integrations
-│       │   │   ├── base.py
-│       │   │   └── square.py
-│       │   └── sms.py
-│       ├── models/
-│       │   ├── call.py         # State machine
-│       │   ├── order.py
-│       │   └── restaurant.py
-│       ├── db/
-│       │   ├── supabase.py
-│       │   └── redis.py
-│       └── workers/
-│           └── celery_app.py   # POS retry, payment expiry
+│       ├── api/                # voice, appointments, prescriptions, triage, clinics, doctors, patients, payments
+│       ├── services/           # livekit_agent, stt, tts, llm, rag, ehr, sms
+│       ├── models/             # call, appointment, prescription, triage, clinic, doctor, patient
+│       ├── db/                 # postgres.py, redis.py
+│       └── workers/            # celery tasks (EHR retry, payment expiry, SMS)
 ├── frontend/
 │   ├── package.json
 │   ├── next.config.js
 │   ├── tailwind.config.js
 │   ├── Dockerfile
+│   ├── .env.local.example
 │   └── src/
 │       ├── app/
-│       │   ├── (restaurant)/   # Restaurant dashboard (7 tabs)
-│       │   └── (admin)/        # Admin panel (9 views)
+│       │   ├── page.tsx        # Landing page
+│       │   ├── (clinic)/       # 7-tab medical dashboard
+│       │   │   ├── dashboard/
+│       │   │   ├── live-calls/
+│       │   │   ├── appointments/
+│       │   │   ├── prescriptions/
+│       │   │   ├── patients/
+│       │   │   ├── analytics/
+│       │   │   └── settings/
+│       │   └── (admin)/        # 9-view admin panel
+│       │       ├── overview/
+│       │       ├── live-monitor/
+│       │       ├── clinics/
+│       │       ├── doctors/
+│       │       ├── patients/
+│       │       ├── revenue/
+│       │       ├── billing/
+│       │       ├── infrastructure/
+│       │       ├── audit/
+│       │       └── analytics/
 │       ├── components/
 │       └── lib/
-├── docker-compose.yml
-└── supabase_schema.sql
+├── docker-compose.yml          # Local dev: backend, frontend, postgres+pgvector, redis
+├── railway.toml                # Backend deployment
+├── vercel.json                 # Frontend deployment
+├── .gitignore
+├── NOTION_PROJECT.md           # Notion import file
+└── README.md
 ```
 
 ## Quick Start
@@ -85,14 +105,14 @@ talkbyte/
 - Docker & Docker Compose
 - Node.js 20+
 - Python 3.12+
-- Supabase account
-- Upstash Redis account
-- Telnyx, LiveKit, Deepgram, OpenAI, ElevenLabs, Stripe, Square accounts
+- PostgreSQL 16 + pgvector
+- Redis
+- Exotel, Knowlarity, Twilio India, LiveKit, Deepgram, OpenAI, ElevenLabs, Razorpay, PhonePe, Cashfree accounts
 
 ### 1. Clone and Configure
 ```bash
-git clone <repo>
-cd talkbyte
+git clone https://github.com/ajayspi/MediCall-AI.git
+cd MediCall-AI
 cp backend/.env.example backend/.env
 cp frontend/.env.local.example frontend/.env.local
 # Fill in all API keys
@@ -100,8 +120,8 @@ cp frontend/.env.local.example frontend/.env.local
 
 ### 2. Database Setup
 ```bash
-# Run in Supabase SQL Editor
-cat backend/supabase_schema.sql
+# Run in PostgreSQL with pgvector extension
+cat backend/postgres_schema.sql
 ```
 
 ### 3. Local Development
@@ -124,37 +144,40 @@ cd frontend && npm install && npm run dev
 
 ## Key Features
 
-### Restaurant Dashboard (7 tabs)
-1. **Overview** - KPIs, call volume charts, recent orders
-2. **Live Calls** - Real-time call cards with timers, audio intercept
-3. **Orders** - 4-stage pipeline (Placed → Link Sent → Paid → Synced)
-4. **Menu** - Category filtering, availability toggle
-5. **Analytics** - Hourly volume, 7-day revenue, peak heatmaps
-6. **Billing** - Plan usage, tier upgrade, invoices
-7. **Settings** - Voice persona, greeting script, POS status
+### Medical Dashboard (7 tabs)
+1. **Overview** - KPIs, call volume charts, recent triage/appointments
+2. **Live Calls** - Real-time call cards with timers, audio intercept, language detection
+3. **Triage Queue** - Active triage cases with severity, patient info, doctor assignment
+4. **Appointments** - 4-stage pipeline (Requested → Confirmed → Completed → Cancelled)
+5. **Prescriptions** - Prescription refill requests, doctor approval, pharmacy sync
+6. **Patients** - Patient directory with medical history, language preference, contact info
+7. **Analytics** - Call volume, triage outcomes, appointment completion, language distribution
+8. **Settings** - Voice persona, greeting script, language config, EHR integration
 
 ### Admin Panel (9 views)
-1. **Overview** - System KPIs, MRR, fleet leaderboard
-2. **Live Monitor** - Active fleet calls with audio intercept
-3. **Restaurants** - 487-tenant directory with health scores
-4. **Users** - RBAC across all venues
-5. **Revenue** - MRR breakdown, COGS analysis
-6. **Billing** - Subscription lifecycle, Stripe sync
-7. **Infrastructure** - 9 service health telemetry
-8. **Audit Log** - Security trail (ORDER, ESCALATION, BILLING, POS)
-9. **Analytics** - Platform performance, cuisine completion
+1. **Overview** - System KPIs, call volume, MRR, clinic leaderboard
+2. **Live Monitor** - Active fleet calls with audio intercept, language filter
+3. **Clinics** - Multi-tenant clinic directory with health scores, EHR status
+4. **Doctors** - Doctor directory with specialization, language, availability
+5. **Patients** - Patient directory with medical history, language preference
+6. **Revenue** - MRR breakdown, consultation fees, COGS analysis
+7. **Billing** - Subscription lifecycle, payment gateway sync, invoices
+8. **Infrastructure** - 9 service health telemetry (Exotel, Knowlarity, Twilio, Deepgram, OpenAI, ElevenLabs, Razorpay, PhonePe, Cashfree, PostgreSQL, Redis, LiveKit)
+9. **Audit Log** - Security trail (CALL, TRIAGE, APPOINTMENT, PRESCRIPTION, PAYMENT, ESCALATION)
 
-### Call State Machine
+### Medical Call State Machine
 ```
-GREETING → TAKING_ORDER → CONFIRMING → CONFIRMED → PAYMENT_SENT → COMPLETE
-                ↓              ↓
-         TRANSFER_TO_HUMAN  TRANSFER_TO_HUMAN
-                ↓
-            CALL_DROPPED
-                ↓
-            POS_FAILED → email fallback
-                ↓
-            PAYMENT_EXPIRED (30 min)
+GREETING → LANGUAGE_DETECT → TRIAGE → INFO_PROVIDED 
+                                    ↓
+                        ┌───────────┴───────────┐
+                        ↓                       ↓
+                 APPOINTMENT_BOOKED      PRESCRIPTION_REFILL
+                        ↓                       ↓
+                   CONFIRMED              DOCTOR_APPROVAL
+                        ↓                       ↓
+                   COMPLETED              PHARMACY_SYNC
+                                    ↓
+                              ESCALATED (if needed)
 ```
 
 ## Deployment
@@ -175,21 +198,23 @@ vercel deploy
 
 ## Key Architectural Decisions
 
-1. **Telnyx over Twilio** — 64% cheaper for AU calls
-2. **LiveKit over custom WebSocket** — SIP bridging, agent framework built-in
-3. **Supabase over separate Postgres + Qdrant** — pgvector eliminates vector DB
-4. **Upstash Redis** — Serverless, zero ops, 30min call session TTL
-4. **Stripe Payment Links** — Customer pays on phone, no hardware needed
-5. **Strategy pattern for POS** — Square / Lightspeed / Kounta swappable
+1. **Multi-provider Telephony** — Exotel + Knowlarity + Twilio India for redundancy
+2. **Local PostgreSQL + pgvector** — No Supabase dependency, full data sovereignty
+3. **Multi-gateway Payments** — Razorpay (cards/UPI) + PhonePe (UPI) + Cashfree (subscriptions)
+4. **Multi-language STT/TTS** — Deepgram Nova-3 + ElevenLabs for 5 Indian languages
+5. **Medical Domain** — HIPAA-ready, DPDP-compliant, audit logging, encryption
+6. **Strategy Pattern** — EHR adapters (Petpooja/Posist), Payment gateways, Telephony providers swappable
 
 ## Sprint Status
 
-- ✅ Sprint 1: Voice Pipeline MVP
-- ✅ Sprint 2: Payments + POS
-- ✅ Sprint 3: Restaurant Dashboard (7 tabs)
-- ✅ Sprint 4: Operator Admin Panel (9 views)
-- ⏳ Production deployment & live venue onboarding
+- ⏳ Sprint 1: Database Migration (PostgreSQL + pgvector)
+- ⏳ Sprint 2: Multi-language STT/TTS + Medical Prompts
+- ⏳ Sprint 3: Payments (Razorpay/PhonePe/Cashfree)
+- ⏳ Sprint 4: Telephony (Exotel/Knowlarity/Twilio India)
+- ⏳ Sprint 5: Medical Domain (Triage/Appointment/Prescription)
+- ⏳ Sprint 6: Frontend Dashboards (Clinic + Admin)
+- ⏳ Production deployment & live clinic onboarding
 
 ## License
 
-Proprietary — TalkByte AI
+Proprietary — MediCall AI
