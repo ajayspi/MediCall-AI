@@ -5,8 +5,17 @@
 | **Phase** | G6-Q3: clinical safety guardrails for the voice agent |
 | **Tracker question** | "Clinical safety: triage guardrails (no diagnosis/dosage from AI), escalation triggers, red-team list, temperature≈0 paths?" |
 | **Branch** | `g-guardrails` off `g-payments` tip `4812795` |
-| **Status** | DRAFT — pending sign-off (Q1–Q4 below) |
+| **Status** | APPROVED (sign-off 2026-09-25: Q1=A1a, Q2=A2a, Q3=A3a, Q4=A4a) |
 | **Date** | 2026-09-25 |
+
+## 0. Sign-off record (2026-09-25, question tool)
+- **Q1=A1a** — layered deterministic escalation triggers (severity red/critical OR red-flag keyword match OR
+  explicit escalate intent; reason records the trigger source).
+- **Q2=A2a** — deterministic output guard (`guard_output`): scan agent response for FORBIDDEN_CLAIMS,
+  replace with fixed per-language refusal phrase (temperature≈0 path), applied before TTS.
+- **Q3=A3a** — ~12-category red-flag catalog (stable keyword tables, case/accent-insensitive substring matching).
+- **Q4=A4a** — adversarial vector table (~15 scenarios) as the RED test suite = the acceptance gate.
+- Test-first (RED → GREEN); stdlib-only; full regression must stay 282 baseline + new.
 
 ## 1. Why now (evidence from the current surface)
 
