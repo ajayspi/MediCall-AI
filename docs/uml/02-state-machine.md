@@ -48,5 +48,10 @@ stateDiagram-v2
   (`POST /api/payments/webhook`, per-gateway HMAC + service token, idempotent
   by `gateway_ref`) advances captured intents and moves the linked call
   `PAYMENT_SENT → COMPLETE`.
+- **Escalation guardrails (G6-Q3 wired)**: independent of the LLM — a red-flag
+  keyword in the caller's words (12-category catalog in
+  `app/services/guardrails.py`) escalates deterministically (temperature≈0
+  path, per-language handoff phrase), and every agent reply is scanned for
+  diagnosis/dosage claims before TTS (fixed per-language refusal phrase).
 - **API enforcement**: the calls router's `PATCH /{call_id}/state` rejects invalid
   transitions with 409 (covered by `test_api_routes.py`).

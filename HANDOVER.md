@@ -115,6 +115,23 @@ is the launchpad.
   `tests/test_payments_q5.py` 36/36 GREEN; regression **282/282**; compileall 0.
   Live SDK round-trips + webhook happy-path runtime = ci.yml stack job on a
   Docker host (authored; still to run).
+- ✅ **CLINICAL GUARDRAILS (G6-Q3) DONE** — spec-first + tests-first on the new
+  `app/services/guardrails.py`: layered escalation triggers (Q1=A1a — severity
+  red/critical OR red-flag keyword OR explicit intent; reason records the
+  source), deterministic output guard (Q2=A2a — FORBIDDEN_CLAIMS scan → fixed
+  per-language refusal phrase before TTS; a diagnosis/dosage claim is never
+  spoken), 12-category red-flag catalog (Q3=A3a — cardiac / respiratory /
+  severe_bleeding / stroke / seizure / poisoning / anaphylaxis / burns /
+  head_injury / pregnancy_emergency / self_harm / choking), red-team vector
+  table = the acceptance suite (Q4=A4a — 21 vectors: 13 escalate, 4 refuse, 4
+  benign no-false-positive). `livekit_agent` wired: a red-flag keyword beats
+  LLM severity (deterministic temperature≈0 escalate + per-language handoff
+  phrase — fixes the hardcoded-English D2 leg); every agent reply is
+  output-guarded before TTS. Zero env keys, no tables, no endpoints. Branch
+  `g-guardrails` off `g-payments` tip `4812795` (spec DRAFT → APPROVED
+  `31b28d1` → RED 37-test 36-fail → feat `0df6962`). Proof:
+  `tests/test_guardrails_q3.py` 37/37 GREEN; regression **319/319**;
+  compileall 0.
 - ▶️ **NEXT: live provider round-trips behind CI secrets** (Deepgram/
   ElevenLabs/OpenAI + LiveKit rooms + real gateway SDK dispatch + signed
   webhook end-to-end) and **run the ci.yml stack job on a Docker host** (RLS/
@@ -133,7 +150,7 @@ is the launchpad.
   Razorpay/PhonePe/Cashfree; PostgreSQL + pgvector local (no Supabase).
 
 ## 4. Still open (answer before the session that needs them)
-G6-Q2 consent/retention (DPDP), Q3 clinical guardrails, Q4 language fallback,
+G6-Q2 consent/retention (DPDP), Q4 language fallback,
 Q8 notifications, Q9 MVP KPIs, Q10 deploy topology.
 
 ## 5. Verify first (before any edit)
@@ -153,6 +170,7 @@ tree — keep it clean; each phase gets its own `.worktrees\<name>` branch via
 ## 6. Spec index (`.opencode/`)
 - `spec-idea-refinement-gaps.md` — master tracker: gaps, sign-off, G-records ← START HERE
 - `spec-payments.md` — G6-Q5 payment flows + gateway wiring (Q1–Q5 APPROVED; DONE)
+- `spec-guardrails-q3.md` — G6-Q3 clinical guardrails (Q1–Q4 APPROVED; DONE)
 - `spec-docker-ci.md` — Docker/CI phase spec (Q1 local+CI, Q2 client+2 pages, Q3 3-job workflow; DONE)
 - `spec-auth.md` — AuthN/Z (G6-Q1) + local-schema repair (Q1–Q4 APPROVED; DONE)
 - `spec-uml-diagrams.md` — UML phase spec (Mermaid, docs/uml/, 5+1 diagrams)

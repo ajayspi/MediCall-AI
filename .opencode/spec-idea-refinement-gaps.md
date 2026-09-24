@@ -580,3 +580,48 @@ Not specified anywhere yet, each needs a decision before build:
 - **Next**: answer G6-Q5 (payment flows/gateway — real gateway calls stay
   gated) → live provider round-trips behind CI secrets → run the ci.yml stack
   job on a Docker host → merge branch tips to main.
+
+## Implementation Record — CLINICAL GUARDRAILS (G6-Q3) DONE (2026-09-25)
+- **Spec**: `.opencode/spec-guardrails-q3.md` — APPROVED via question tool;
+  locked decisions: **Q1=A1a** layered deterministic escalation triggers
+  (severity red/critical OR red-flag keyword match OR explicit escalate intent;
+  reason records the trigger source); **Q2=A2a** deterministic output guard
+  (`guard_output` scans FORBIDDEN_CLAIMS → fixed per-language refusal phrase,
+  the temperature≈0 path, applied before TTS); **Q3=A3a** ~12-category red-flag
+  catalog (stable keyword tables, case-insensitive substring matching);
+  **Q4=A4a** adversarial vector table (~15 scenarios) as the RED test suite =
+  the acceptance gate. Branch `g-guardrails` off `g-payments` tip `4812795`:
+  spec DRAFT → APPROVED `31b28d1` → RED → feat `0df6962` → docs (this record).
+- **RED verified**: `tests/test_guardrails_q3.py` 37 tests, **33 failures + 3
+  errors** on the g-payments scaffold (every missing artifact mapped; exit 1
+  intentional). One latent RED-suite bug fixed at GREEN time (`[t for _, _, a
+  in RED_TEAM ...]` bound `a` not `t` → counts via `sum(1 for ...)`).
+- **GREEN verified**: Q3 suite 37/37; full regression **319/319** (282 prior +
+  37 new; all 12 suites PASS); `compileall` exit 0. No env keys, no tables, no
+  endpoints — pure stdlib logic, fully verified on this PC.
+- **Delivered**: `app/services/guardrails.py` — `RED_FLAG_CATEGORIES` (12
+  categories: cardiac, respiratory, severe_bleeding, stroke, seizure,
+  poisoning, anaphylaxis, burns, head_injury, pregnancy_emergency, self_harm,
+  choking), `match_red_flag(text) → (category, phrase) | None`,
+  `escalation_decision(severity, caller_text) → (bool, reason)` reusing
+  `agent_logic.should_escalate` (layered, reason = "severity:red" /
+  "red_flag:cardiac" / ""), `guard_output(text, language)` 
+  (`DIAGNOSIS_CLAIMS` substring + `DOSAGE_CLAIMS` regex →
+  `SAFE_REFUSALS[lang]`, flag ∈ {safe, refused}, reason ∈ {"", "diagnosis",
+  "dosage"}), `SAFE_REFUSALS`/`ESCALATE_PHRASES` for all 5 languages. Wired
+  into `livekit_agent.py`: transcript red-flag hit → set `triage_severity =
+  "red"` + speak per-language escalation phrase + break (deterministic, no
+  LLM); ESCALATED leg now speaks the per-language phrase (was hardcoded
+  English — the "specialist" literal survives via the `.get()` fallback arg);
+  every agent reply passes `guard_output` before TTS. G4 pins preserved
+  (`agent_logic`, `CallState`, `MEDICAL_FUNCTIONS`, `specialist`). Docs:
+  02-state-machine + 06-call-lifecycle guardrail notes; HANDOVER.
+- **Gotchas (one-line rules)**: G4's suite pins "specialist" in
+  `livekit_agent.py` source — keep the EN fallback string inside the
+  `ESCALATE_PHRASES.get(...)` call so the literal survives the per-language
+  swap; RED suites are code too — an unbound var in a comprehension only
+  surfaces when the suite is first exercised at GREEN time.
+- **Next**: answer G6-Q4 (language fallback) / Q8 (notifications) / Q2
+  (consent/DPDP) / Q9 (KPIs) / Q10 (deploy topology) → live provider
+  round-trips behind CI secrets → run the ci.yml stack job on a Docker host →
+  merge branch tips to main.

@@ -1,11 +1,11 @@
-# G6-Q3 Clinical Guardrails — spec (DRAFT)
+# G6-Q3 Clinical Guardrails — spec (APPROVED → GREEN)
 
 | | |
 |---|---|
 | **Phase** | G6-Q3: clinical safety guardrails for the voice agent |
 | **Tracker question** | "Clinical safety: triage guardrails (no diagnosis/dosage from AI), escalation triggers, red-team list, temperature≈0 paths?" |
 | **Branch** | `g-guardrails` off `g-payments` tip `4812795` |
-| **Status** | APPROVED (sign-off 2026-09-25: Q1=A1a, Q2=A2a, Q3=A3a, Q4=A4a) |
+| **Status** | GREEN (2026-09-25: Q1=A1a → Q4=A4a approved + implemented; 37-test suite + full regression PASS) |
 | **Date** | 2026-09-25 |
 
 ## 0. Sign-off record (2026-09-25, question tool)
@@ -105,3 +105,20 @@ Q3 answers the question and hardens all five.
 - Stdlib-only (no pip on this PC); lint gate = `compileall`; Python 3.14.7 via `py -3.14`.
 - Keep the literal "G6-Q3" in `guardrails.py` docstring (parity with "G6-Q5" in `payments.py`).
 - Full regression must stay at 282 baseline + new tests.
+
+## 7. Implementation record — DONE (2026-09-25)
+- **RED verified**: `tests/test_guardrails_q3.py` 37 tests — **33 failures + 3
+  errors** on the g-payments scaffold (no guardrails module, no livekit wiring,
+  no docs note; exit 1 intentional). One latent RED-suite bug fixed at GREEN
+  time: `[t for _, _, a in RED_TEAM ...]` never bound `t` → switch to
+  `sum(1 for ...)` counts.
+- **GREEN verified**: Q3 suite 37/37 (first run: 1 docs failure + 1 test bug;
+  both fixed); full regression **319/319**; `compileall` exit 0.
+- **Delivered**: `app/services/guardrails.py` + `livekit_agent.py` wiring as
+  signed off (A+B above); docs: 02-state-machine.md + 06-call-lifecycle.md
+  guardrail notes, HANDOVER, this record.
+- **Gotcha (one-line rule)**: G4's test pins "specialist" in `livekit_agent.py`
+  source — when swapping the hardcoded English escalation line for
+  `ESCALATE_PHRASES.get(...)`, keep the English string as the fallback argument
+  so the literal survives; RED suites are code too — a comprehension referencing
+  an unbound var only surfaces once the suite is exercised at GREEN time.

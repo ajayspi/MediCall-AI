@@ -43,3 +43,8 @@ sequenceDiagram
   back to `APPOINTMENT`.
 - The `/call-completed` → `update_call_transcript` DB write is a Docker/CI-stage
   TODO (idempotent, keyed by `call_id`), matching 04-data-flow.
+- The escalation leg is guardrailed (G6-Q3): a red-flag keyword in a caller
+  turn escalates deterministically without waiting for the LLM (12-category
+  catalog, per-language handoff phrase), and every agent reply passes the
+  output guard (diagnosis/dosage claims → fixed per-language refusal phrase)
+  before ElevenLabs TTS.
