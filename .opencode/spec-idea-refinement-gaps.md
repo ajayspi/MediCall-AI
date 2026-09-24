@@ -129,3 +129,32 @@ Not specified anywhere yet, each needs a decision before build:
   always run the script from project root.
 - **Next after sign-off**: write `tests/test_g4_voice.py` RED → implement →
   GREEN + py_compile → commit on `g4-voice` → then G5 (requirements).
+
+## Implementation Record — G4 APPROVED (2026-09-24)
+- Spec `spec-g4-voice-pipeline.md` **APPROVED** by user, all decisions locked:
+  D1 agent→`/call-completed` persistence; D2 escalation MVP (flag + message +
+  room event, PSTN stub); D3 `DEFAULT_CALLER_LANGUAGE=hi`.
+- Implementation session continues on `g4-voice` immediately (tests RED first).
+
+## Implementation Record — G4 DONE (2026-09-24)
+- **GREEN verified**: `tests/test_g4_voice.py` 33/33, G1+G2 11/11, G3 9/9,
+  py_compile exit 0 over all 10 touched modules. Commit `g4-voice d8b7239`.
+- Delivered: 3 provider webhooks (`/webhook/{exotel,knowlarity,twilio}`) +
+  `/livekit-agent-start` + `/call-completed` in `app/api/voice.py`; medical
+  agent on G3 state machine in `livekit_agent.py`; new stdlib
+  `services/telephony.py` (defensive parsers → normalized `ProviderEvent`,
+  vendor field shapes verified 2026-09-24) and `services/agent_logic.py`
+  (system prompt, `MEDICAL_FUNCTIONS` single source, `apply_intent`,
+  transcript append, 5-language STT/TTS helpers); medical
+  llm.py/stt.py/tts.py; `postgres.py::update_call_transcript`; `.env.example`
+  +`DEFAULT_CALLER_LANGUAGE=hi` + `DEFAULT_CLINIC_ID`.
+- RED captured pre-fix: 16 failures/errors (Telnyx/restaurant leftovers, missing
+  modules/helpers) — first GREEN run had 1 failure that was a **test bug, not
+  code**: `async def` functions are `ast.AsyncFunctionDef`, a SIBLING of
+  `ast.FunctionDef`, so the walker skipped them; fixed by matching
+  `(ast.FunctionDef, ast.AsyncFunctionDef)`.
+- **Gotcha (one-line rule)**: in stdlib `ast` checks, match
+  `isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))` — `FunctionDef`
+  alone silently misses every `async def`.
+- **Next**: G5 (requirements: drop stripe/celery, add pytest/ruff, Knowlarity
+  client) → clinic (7-tab) + admin (9-view) dashboards → API routes → UML.

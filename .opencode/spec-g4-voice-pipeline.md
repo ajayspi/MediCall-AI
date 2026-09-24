@@ -157,7 +157,13 @@ Deepgram/ElevenLabs/OpenAI calls, LiveKit room lifecycle.
 
 ## 9. Sign-off
 
-- **Status**: ☐ APPROVED / ☐ CHANGES REQUESTED (D1/D2/D3 answers)
-- **Approver / date**:
-- **Next after approval**: write `tests/test_g4_voice.py` RED → implement files
-  → GREEN + py_compile → commit on `g4-voice`.
+- **Status**: ✅ **APPROVED 2026-09-24** — scope, contract, and test plan accepted.
+- **D1** (transcript path): agent → `POST /api/voice/call-completed`; `voice.py`
+  persists via new `update_call_transcript(postgres)`.
+- **D2** (escalation MVP): `ESCALATED` + `escalated_to_human=True` +
+  "connecting you to a specialist" TTS + room event for operator UI; PSTN
+  warm-transfer stubbed for integration.
+- **D3** (default language): `DEFAULT_CALLER_LANGUAGE=hi` env-overridable;
+  IVR digit map 1=hi 2=en 3=ta 4=te 5=bn.
+- **Delivered 2026-09-24, all GREEN (commit `g4-voice d8b7239`)**: G4 tests
+  33/33, G1+G2 11/11, G3 9/9, py_compile clean. See tracker G4 DONE record.
