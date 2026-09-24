@@ -491,6 +491,34 @@ async def update_call_state(call_id: uuid.UUID, new_state: str) -> bool:
         return result.scalar_one() is not None
 
 
+async def update_call_transcript(
+    call_id: uuid.UUID,
+    transcript: list,
+    ended_at: Optional[datetime] = None,
+    duration_seconds: int = 0,
+) -> bool:
+    """Persist the final transcript + end metadata (G4 /call-completed, D1).
+
+    Idempotent by call_id; ended_at defaults to now when not provided by the
+    agent payload.
+    """
+    async with SessionFactory() as session:
+        stmt = (
+            update(Call)
+            .where(Call.id == call_id)
+            .values(
+                transcript=transcript,
+                ended_at=ended_at or now_tz(),
+                duration_seconds=duration_seconds,
+                updated_at=now_tz(),
+            )
+            .returning(Call.id)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one_or_none() is not None
+
+
 async def create_appointment(
     clinic_id: uuid.UUID,
     patient_name: str,

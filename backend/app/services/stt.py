@@ -1,19 +1,28 @@
-"""Deepgram Flux WebSocket STT"""
-import json
+"""Deepgram WebSocket STT — multi-language (hi/en/ta/te/bn)."""
 import asyncio
-import websockets
+import json
 import os
 from typing import AsyncGenerator
 
+import websockets
+
+from app.services.agent_logic import stt_language_tag
+
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
-DEEPGRAM_URL = "wss://api.deepgram.com/v1/listen?model=flux&language=en-AU&punctuate=true&interim_results=true&encoding=linear16&sample_rate=16000"
+DEEPGRAM_TEMPLATE = (
+    "wss://api.deepgram.com/v1/listen?model=nova-3&language={lang}&"
+    "punctuate=true&interim_results=true&encoding=linear16&sample_rate=16000"
+)
 
 
-async def stt_stream(audio_queue: asyncio.Queue) -> AsyncGenerator[str, None]:
-    """Stream audio to Deepgram and yield transcripts"""
+async def stt_stream(
+    audio_queue: asyncio.Queue, language: str = "hi"
+) -> AsyncGenerator[str, None]:
+    """Stream audio to Deepgram and yield transcripts in the call language."""
+    url = DEEPGRAM_TEMPLATE.format(lang=stt_language_tag(language))
     headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}"}
 
-    async with websockets.connect(DEEPGRAM_URL, extra_headers=headers) as ws:
+    async with websockets.connect(url, extra_headers=headers) as ws:
         async def sender():
             while True:
                 chunk = await audio_queue.get()
@@ -30,7 +39,6 @@ async def stt_stream(audio_queue: asyncio.Queue) -> AsyncGenerator[str, None]:
                     if transcript:
                         yield transcript
 
-        # Run sender and receiver concurrently
         sender_task = asyncio.create_task(sender())
         async for transcript in receiver():
             yield transcript
