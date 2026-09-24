@@ -158,3 +158,38 @@ Not specified anywhere yet, each needs a decision before build:
   alone silently misses every `async def`.
 - **Next**: G5 (requirements: drop stripe/celery, add pytest/ruff, Knowlarity
   client) → clinic (7-tab) + admin (9-view) dashboards → API routes → UML.
+
+## Implementation Record — G5 DONE (2026-09-24)
+- **Spec**: `.opencode/spec-g5-requirements-knowlarity.md` — APPROVED in-session
+  via question tool; locked decisions: D1 in-house httpx Knowlarity client (no
+  maintained PyPI SDK exists), D2 single requirements.txt with
+  `# --- dev/test ---` section, D3 pinned pytest==8.3.5 /
+  pytest-asyncio==0.25.3 / ruff==0.11.9.
+- **GREEN verified**: `tests/test_g5_reqs.py` 18/18, G1+G2 11/11, G3 9/9,
+  G4 33/33 (no regression), `py_compile` exit 0 over all touched modules.
+  RED captured pre-fix: 5 failures + 1 error (stale pins, missing dev deps,
+  wrong payment pins, missing env var, knowlarity.py import).
+- **`backend/requirements.txt`**: dropped `stripe`, `celery`, `gunicorn`,
+  `psycopg2-binary`, `sqlalchemy-asyncio` (NOT a real package); payments pinned
+  to verified real SDKs — `razorpay==2.0.1`, `phonepe-pg-sdk-python==2.3.0`
+  (import name `phonepe_sdk`; `phonepe==1.0.0` was a wrong/nonexistent name),
+  `cashfree-pg==6.0.1` — verified against PyPI 2026-09-24; dev/test section
+  added.
+- **`backend/app/services/knowlarity.py`** (new): stdlib-importable Knowlarity
+  SR API client — `KnowlarityConfig` + `from_env()`, `headers()`
+  (`authorization` + `x-api-key`), URL builders (`call/makecall`,
+  `call/campaign`, `call/campaign/order-status/?order_id=`), `makecall_payload`,
+  `campaign_payload` (default tz `Asia/Kolkata`, `yyyy-MM-dd HH:mm`
+  start_time), defensive `_id_of`; transport (`make_call`, `place_campaign`,
+  `campaign_status`) imports httpx lazily — same pattern as telephony.py.
+  Endpoints verified developer.knowlarity.com + Gupshup docs 2026-09-24.
+- **`backend/.env.example`**: +`KNOWLARITY_AUTHORIZATION=` with SR-auth comment.
+- **Gotcha (one-line rule)**: `datetime.UTC` (class attr) is NOT available on
+  every runtime while `datetime.utcnow()` IS deprecated — use
+  `datetime.now(timezone.utc)` (works everywhere, no deprecation warning, and
+  a DeprecationWarning on stderr makes PowerShell report a bogus exit 1 via
+  `2>&1` even when tests pass — keep warnings out of the code; check
+  `$LASTEXITCODE` for the honest exit code).
+- **Next**: clinic (7-tab) + admin (9-view) dashboards → API routes → UML →
+  Docker/CI integration stage (real provider round-trips, live STT/TTS/LLM,
+  LiveKit room lifecycle, `/call-completed` + `update_call_transcript` DB path).
