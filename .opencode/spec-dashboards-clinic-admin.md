@@ -163,3 +163,22 @@ Verify after implementation:
 - **Next after approval**: write `tests/test_dashboards.py` RED → implement
   (toolchain + tokens + components + 16 pages + deletions) → GREEN → commit on
   `gd-dashboards` → then API routes phase.
+
+## 9. Delivery record (2026-09-24)
+
+**Status: DONE — GREEN verified.** Commits on `gd-dashboards`: sign-off `555bb6b`
+→ acceptance RED `71bcb67` (34 tests, 30 failures → all gaps mapped) → feat
+`4f639df` (38 files, +1656/−1084).
+
+- **Toolchain (D3)** ✅: globals.css CSS-first (`@import "tailwindcss"` + `@theme`
+  tokens), `postcss.config.mjs` with `@tailwindcss/postcss`, `tailwind.config.js`
+  deleted, `autoprefixer` dropped, `@tailwindcss/postcss ^4.0.0` added.
+- **Cleanup** ✅: `(restaurant)/` deleted, Supabase image domain removed, root
+  page/layout rebranded **MediCall AI**.
+- **Shells** ✅: `(clinic)` 7 tabs (Settings in header — D1) + 7 pages;
+  `(admin)` 9 views + 9 pages; shared `src/components/` incl. `nav.ts` single
+  source, medical badges, `mock.ts`.
+- **Tests** ✅: `tests/test_dashboards.py` **34/34**; full regression **105/105**
+  (G1+G2 11 · G3 9 · G4 33 · G5 18 · dashboards 34); `py_compile` exit 0.
+- **Not in scope (queued)**: API wiring, marketing site, RTL/light theme, real
+  `next build` (→ Docker/CI stage).

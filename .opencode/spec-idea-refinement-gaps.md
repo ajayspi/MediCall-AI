@@ -193,3 +193,56 @@ Not specified anywhere yet, each needs a decision before build:
 - **Next**: clinic (7-tab) + admin (9-view) dashboards → API routes → UML →
   Docker/CI integration stage (real provider round-trips, live STT/TTS/LLM,
   LiveKit room lifecycle, `/call-completed` + `update_call_transcript` DB path).
+
+## Implementation Record — DASHBOARDS DONE (2026-09-24)
+- **Spec**: `.opencode/spec-dashboards-clinic-admin.md` — APPROVED via question
+  tool; locked decisions: **D1** = clinic nav exactly 7 tabs, Settings in the
+  header (not the sidebar), **D2** = scope = dashboards + tokens + minimal
+  toolchain fix (marketing site / full design system stay queued), **D3** =
+  Tailwind v4 CSS-first migration. Branch `gd-dashboards` off `g4-voice`
+  tip `503fad6`: spec `555bb6b` → RED test `71bcb67` → feat `4f639df`.
+- **RED verified**: `tests/test_dashboards.py` 34 tests, 30 failures against
+  the restaurant/broken frontend (every gap mapped: Supabase import, v3
+  toolchain, no postcss config, sky-blue v3 config, restaurant group, TalkByte
+  branding, no `(clinic)`/components).
+- **GREEN verified**: 34/34; full regression G1+G2 11/11, G3 9/9, G4 33/33,
+  G5 18/18 (105 total), `py_compile` exit 0. Green needed 2 fixes: contiguous
+  "MediCall AI" in root page (see gotcha) + test-data filename correction.
+- **Toolchain (D3)**: `src/app/globals.css` rewritten CSS-first —
+  `@import "tailwindcss"` + `@theme` tokens (medical teal primary 50–950,
+  `--color-background/surface`, severity green/amber/red/critical, multilingual
+  font stack hi/en/ta/te/bn scripts), `@layer base/components` (card,
+  btn-primary/secondary); `frontend/postcss.config.mjs` = `@tailwindcss/postcss`;
+  `tailwind.config.js` DELETED; `autoprefixer` dropped from package.json;
+  `@tailwindcss/postcss` added (`^4.0.0`); `next.config.js` Supabase image
+  domain removed (standalone output + `/api` proxy rewrite kept).
+- **Cleanup**: `(restaurant)/` group deleted; root `page.tsx` = branded
+  placeholder (no TalkByte); root `layout.tsx` = MediCall AI metadata, dark
+  `colorscheme` tokens on body.
+- **Components** (`frontend/src/components/`): `nav.ts` single source —
+  `CLINIC_NAV` (7 hrefs) + `ADMIN_NAV` (9 hrefs), SVG path icons; `sidebar.tsx`
+  (client: brand logo = teal cross+waves, active tab state, mobile FAB +
+  overlay, user section) + `header.tsx` (settings gear when `settingsHref`
+  passed — clinic shell passes `/settings`, D1); `card.tsx`, `stat-card.tsx`,
+  `badge.tsx`; `language-badge.tsx` (hi/हिन्दी en/English ta/தமிழ் te/తెలుగు
+  bn/বাংলা), `severity-badge.tsx` (4 levels), `call-state-badge.tsx` (9 G3
+  states), `mock.ts` (medical India mock: +91, ₹, gateways Razorpay/PhonePe/
+  Cashfree, telephony Exotel/Knowlarity/Twilio-India, 9 providers infra).
+- **Pages** (16, static server components, mock data only — no API wiring):
+  `(clinic)/layout.tsx` + dashboard, live-calls, triage-queue, appointments,
+  prescriptions, patients, analytics (Settings via header); `(admin)/layout.tsx`
+  + page(Overview), live-monitor, clinics, doctors, patients, revenue,
+  billing, infrastructure, audit.
+- **Gotcha (one-line rule)**: gradient/theme spans that SPLIT a brand string
+  (`MediCall <span>AI</span>`) break `assertIn("MediCall AI", file)` source
+  checks — keep brand strings contiguous and apply the span class to the whole
+  string.
+- **Gotcha (one-line rule)**: Next.js tab pages live at `(group)/<tab>/page.tsx`
+  — acceptance tests must expect filename `page`, not the tab name; my
+  `CLINIC_TAB_FILES` used `("dashboard","dashboard")` and failed once on the
+  correct impl (admin side had it right with `("", "page")`).
+- **Next**: API routes phase (`main.py` already expects calls/appointments/
+  prescriptions/payments/clinics routers) → UML → Docker/CI integration stage
+  (live provider round-trips, real Deepgram/ElevenLabs/OpenAI, LiveKit room
+  lifecycle, `/call-completed` + `update_call_transcript` DB path, ruff
+  actually run, `next build`).
