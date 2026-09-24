@@ -154,6 +154,23 @@ compose initdb runs this file, so the stack cannot come up today.
   0; `npm run lint` + `npm run build` exit 0 (real, incl. login page + guard);
   ci.yml stack job runs smoke incl. auth on a Docker host later.
 
+## Status (2026-09-25) — IMPLEMENTED, GREEN
+- Commits: spec `14dbe1a` → RED `108a700` (42 tests: 20 fail + 21 err) →
+  feat `74accbe` → docs `…` (this record); worktree `g-auth` off `g-ci`
+  tip `81587ef`.
+- The suite ended at **42 tests** (not ≈24) — service crypto/roles/phone +
+  schema repair + router/env/compose + frontend + smoke/ER assertions.
+- GREEN: `test_auth.py` 42/42; full regression **222/222** (180 prior + 42,
+  `BAD_SUITES` empty); `compileall` exit 0; eslint 0 errors (1 benign
+  warning); **`next build` exit 0** (20 routes incl. `/login`). The ci.yml
+  stack job (smoke incl. the auth round-trip) still runs on a Docker host.
+- Test refinements during GREEN (documented in the suite): `verify_otp`'s
+  valid-case passes the keying `phone` (stored OTP hashes are HMAC keyed by
+  phone — the 4-arg call cannot recompute them); the doctor-role block check
+  bounds by the NEXT `CREATE TABLE` (an inline `;` inside a SQL comment
+  truncated the old split); api_routes router set synced 6→7 (auth); UML ER
+  counts 9→10 tables / 13→14 edges + users spot columns.
+
 ## Non-Goals (hold the line)
 - NO real SMS / SSO provider calls (no keys presented — same discipline as
   payments/telephony/STT-TTS; endpoints gated in-code).

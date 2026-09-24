@@ -60,11 +60,25 @@ is the launchpad.
   ci+lint+build, stack compose up + smoke + teardown). Branch `g-ci` off
   `g-uml` tip. Proof: `tests/test_docker_ci.py` 18/18 GREEN; regression
   **180/180**; eslint 0; next build exit 0.
-- ▶️ **NEXT: Auth (G6-Q1, locked)** — OTP + password + Google/Microsoft SSO +
-  ABHA, role matrix (owner/staff/triage_agent/doctor/readonly). Then: payments
-  real gateway wiring once G6-Q5 is answered; live Deepgram/ElevenLabs/OpenAI +
-  LiveKit room round-trips behind CI secrets (ci.yml stack job proves the
-  composable contract on a Docker runner); then merge branch tips to main.
+- ✅ **AUTH (G6-Q1) DONE** — stdlib AuthN/Z core + local-schema repair: PBKDF2
+  passwords (210k iters), hashed 6-digit OTP (TTL+cap), JWT-shaped HMAC-SHA256
+  tokens (12h), role matrix incl. `doctor`; `users` table + `auth.uid()` GUC
+  RLS (ENABLED, NOT FORCED — owner-bypass keeps the unauth API working;
+  enforcement stages next phase), `clinic_users.user_id → users(id)`;
+  `app/api/auth.py` router (register/login/otp/me/logout/providers + SSO 501
+  gates) + guards library (`get_current_user`/`require_roles`/
+  `require_clinic_role`), 7th router in `main.py`; frontend `/login` page
+  (password + OTP tabs + offline demo), `AuthProvider`/`RequireAuth` guard in
+  the clinic+admin layouts (skipped unless `NEXT_PUBLIC_USE_MOCK === "false"`),
+  api.ts Bearer auth surface; `smoke_api.py` register→login→me round-trip; UML
+  docs 01-er (10 tables/14 edges) + 03-api-contracts (`/api/auth`). Branch
+  `g-auth` off `g-ci` tip `81587ef`. Proof: `tests/test_auth.py` 42/42 GREEN;
+  regression **222/222**; compileall 0; eslint 0; next build exit 0 (20 routes).
+- ▶️ **NEXT: Auth ENFORCEMENT (Q1-staged)** — wire the guards onto the 5 domain
+  routers + `FORCE ROW LEVEL SECURITY` + non-owner `medicall_app` role (flip
+  together). Then: payments real gateway wiring once G6-Q5 is answered; live
+  Deepgram/ElevenLabs/OpenAI + LiveKit room round-trips behind CI secrets; run
+  the ci.yml stack job on a Docker host; then merge branch tips to main.
 - ⏳ **After**: Interactly-parity build (benchmarks + integration catalog are
   specced in `spec-multifit-healthcare.md`, NOT built).
 
@@ -99,6 +113,7 @@ tree — keep it clean; each phase gets its own `.worktrees\<name>` branch via
 ## 6. Spec index (`.opencode/`)
 - `spec-idea-refinement-gaps.md` — master tracker: gaps, sign-off, G-records ← START HERE
 - `spec-docker-ci.md` — Docker/CI phase spec (Q1 local+CI, Q2 client+2 pages, Q3 3-job workflow; DONE)
+- `spec-auth.md` — AuthN/Z (G6-Q1) + local-schema repair (Q1–Q4 APPROVED; DONE)
 - `spec-uml-diagrams.md` — UML phase spec (Mermaid, docs/uml/, 5+1 diagrams)
 - `spec-micc-india.md` — India-market requirements (approved)
 - `spec-multifit-healthcare.md` — platform vision + Interactly research
@@ -108,7 +123,8 @@ tree — keep it clean; each phase gets its own `.worktrees\<name>` branch via
 ## 7. Session rules (non-negotiable)
 1. Spec-first: clarify → research on-disk (don't assume) → update spec →
    STOP for sign-off → implement only on approval.
-2. One task per session (next = Auth, G6-Q1).
+2. One task per session (next = auth enforcement: guards on the 5 domain
+   routers + FORCE RLS + `medicall_app` role).
 3. Tests first (RED), implement to GREEN, refactor, lint-equivalent
    (`py_compile`/`compileall`; ruff runs in CI; eslint + next build are real
    locally since g-ci).

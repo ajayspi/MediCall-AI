@@ -406,3 +406,55 @@ Not specified anywhere yet, each needs a decision before build:
   once G6-Q5 is answered → live provider round-trips behind CI secrets
   (Deepgram/ElevenLabs/OpenAI, LiveKit rooms; the compose stack job in ci.yml
   proves the endpoint contract on a Docker runner) → merge branch tips to main.
+
+## Implementation Record — AUTH (G6-Q1) DONE (2026-09-25)
+- **Spec**: `.opencode/spec-auth.md` — APPROVED via question tool; locked
+  decisions: **Q1** = guards library only — no enforcement on the existing 5
+  routers this phase, **Q2** = keep RLS via a local `auth.uid()` GUC (reads
+  `app.current_user_id`; NO `FORCE ROW LEVEL SECURITY` yet — owner-bypass keeps
+  the unauth API working; enforcement + FORCE + non-owner `medicall_app` role
+  stage with the next phase), **Q3** = `/login` page + client guard (guard
+  skipped when `NEXT_PUBLIC_USE_MOCK !== "false"`, demo-token path for offline),
+  **Q4** = stdlib HMAC-SHA256 JWT-shaped tokens (python-jose/passlib stay pinned
+  for later SSO/resource-server). Branch `g-auth` off `g-ci` tip `81587ef`:
+  spec `14dbe1a` → RED `108a700` → feat `74accbe` → docs (this record).
+- **RED verified**: `tests/test_auth.py` 42 tests, **20 failures + 21 errors**
+  (every missing artifact mapped; exit 1).
+- **GREEN verified**: new suite 42/42; full regression **222 total** (180
+  prior + 42, `BAD_SUITES` empty); `compileall` exit 0; eslint 0 errors (1
+  benign warning); **`next build` exit 0** (20 routes incl. `/login`).
+- **Delivered**: `app/services/auth.py` stdlib core — PBKDF2-HMAC-SHA256
+  passwords (210k iters, `compare_digest`), 6-digit OTP hashed (HMAC keyed by
+  phone, 600s TTL, 5-attempt cap), JWT-shaped HMAC-SHA256 tokens (12h),
+  `ROLES` + `can()`, `normalize_phone` (+91/10-digit 6–9). `app/api/auth.py`
+  router — `/register` (409 dup), `/login` (401 bad creds),
+  `/otp/request|verify` (404 unknown, 429 cap, dev-logged code), `/me` (Bearer,
+  memberships), `/logout`, `/providers`, `/oauth/{provider}` (501 until
+  Google/Microsoft/ABHA env keys) — plus the guards library
+  `get_current_user` / `require_roles` / `require_clinic_role`; wired into
+  `main.py` as the 7th router (`prefix="/api/auth"`). Schema repair:
+  `users` table (email/phone UNIQUE nullable, password_hash, otp_*,
+  role incl. `doctor`, is_active), `clinic_users.user_id → users(id)`,
+  `auth` schema + `auth.uid()` GUC + `CREATE ROLE authenticated` + RLS policy
+  comments staging FORCE, index/trigger/grants. SQLAlchemy: `User` model +
+  `ClinicUser` FK. Env: `AUTH_JWT_SECRET` (+ SSO keys) in `.env.example` +
+  compose default. Frontend: `api.ts` auth surface (token helpers +
+  Authorization header), `lib/auth.tsx` (`AuthProvider`/`RequireAuth` — effect
+  hydrates via a deferred task per `react-hooks/set-state-in-effect`),
+  `app/login/page.tsx` (password + OTP tabs + offline demo), guard in
+  `(clinic)`+`admin` layouts, `AuthProvider` in `providers.tsx`.
+  `smoke_api.py` auth round-trip (register→dup 409→login→bearer me→otp
+  request→providers). UML corollary: `01-er.md` 10 tables/14 edges +
+  users block, `03-api-contracts.md` +`/api/auth`, `test_uml_diagrams.py`
+  counts, `test_api_routes.py` 6→7 routers.
+- **Gotchas (one-line rules)**: FastAPI `Depends(...)` defaults evaluate at
+  import time — define guards BEFORE endpoints (forward ref = NameError);
+  `react-hooks/set-state-in-effect` forbids synchronous setState in effect
+  bodies — defer storage hydration to a macrotask; `Split(";", 1)` block
+  parsing dies on inline `;` inside SQL comments (`(India; NULL…)`) — bound
+  blocks by the NEXT `CREATE TABLE` instead; `test_main_registers_all_*_routers`
+  is an EXACT set-equality — adding a router requires syncing it.
+- **Next**: auth enforcement phase (per-Q1 staging): wire the guards onto the 5
+  domain routers + `FORCE ROW LEVEL SECURITY` + non-owner `medicall_app` role →
+  answer G6-Q5 (payments) → live provider round-trips behind CI secrets → run
+  ci.yml stack job on a Docker host → merge branch tips to main.
