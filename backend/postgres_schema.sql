@@ -7,7 +7,7 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- Core: Clinics/Facilities (replaces restaurants from TalkByte AI)
+-- Core: Clinics/Facilities (medical call center tenants)
 CREATE TABLE clinics (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
@@ -136,7 +136,18 @@ CREATE TABLE call_sessions (
     status TEXT DEFAULT 'idle', -- idle, recording, in_progress, completed, failed
     started_at TIMESTAMPTZ DEFAULT NOW(),
     last_heartbeat TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT fk_call FOREIGN KEY (call_id) REFERENCES calls(id) ON DELETE CASCADE
+    CREATE TABLE payments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    clinic_id UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    call_id UUID REFERENCES calls(id) ON DELETE SET NULL,
+    appointment_id UUID REFERENCES appointments(id) ON DELETE SET NULL,
+    amount NUMERIC(10,2) NOT NULL,
+    currency TEXT DEFAULT 'INR',
+    gateway TEXT, -- razorpay, phonepe, cashfree, manual
+    gateway_ref TEXT,
+    status TEXT DEFAULT 'pending', -- pending, captured, failed, refunded
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Indexes for call center performance (critical for high-concurrency workload)
@@ -151,6 +162,7 @@ CREATE INDEX idx_appointments_status ON appointments(status);
 CREATE INDEX idx_clinics_active ON clinics(is_active);
 CREATE INDEX idx_clinic_users_clinic ON clinic_users(clinic_id);
 CREATE INDEX idx_call_embeddings_call ON call_embeddings(call_id);
+CREATE INDEX idx_payments_clinic_status ON payments(clinic_id, status);
 
 -- pgvector similarity search function: find calls with similar patterns
 CREATE OR REPLACE FUNCTION search_similar_calls(
@@ -259,12 +271,16 @@ CREATE TRIGGER update_appointments_updated_at BEFORE UPDATE ON appointments
 CREATE TRIGGER update_prescriptions_updated_at BEFORE UPDATE ON prescriptions
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
+CREATE TRIGGER update_payments_updated_at BEFORE UPDATE ON payments
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
 -- Row Level Security (RLS) — multi-tenant data isolation
 ALTER TABLE clinics ENABLE ROW LEVEL SECURITY;
 ALTER TABLE clinic_users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE calls ENABLE ROW LEVEL SECURITY;
 ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE prescriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
 
 -- Clinic owners see their own clinic data
 CREATE POLICY clinic_own_data ON clinics
@@ -308,6 +324,12 @@ CREATE POLICY prescriptions_manage ON prescriptions
         SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
     ));
 
+-- Payments: clinic staff can manage payments for their clinic
+CREATE POLICY payments_manage ON payments
+    FOR ALL USING (clinic_id IN (
+        SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
+    ));
+
 -- Language codes: always readable (reference data)
 CREATE POLICY language_codes_read ON language_codes
     FOR SELECT USING (is_active = TRUE);
@@ -318,4 +340,5 @@ GRANT ALL ON clinic_users TO authenticated;
 GRANT ALL ON calls TO authenticated;
 GRANT ALL ON appointments TO authenticated;
 GRANT ALL ON prescriptions TO authenticated;
+GRANT ALL ON payments TO authenticated;
 GRANT USAGE, SELECT ON sequence language_codes_id_seq TO authenticated;

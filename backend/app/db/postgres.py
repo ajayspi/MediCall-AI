@@ -24,6 +24,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -386,6 +387,48 @@ class CallSession(Base):
         return f"<CallSession call={self.call_id} status={self.status}>"
 
 
+class Payment(Base):
+    """Payments — scaffold (G6-Q5: flows/gateways open; records intent only)."""
+
+    __tablename__ = "payments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("clinics.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    call_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("calls.id", ondelete="SET NULL"), nullable=True
+    )
+    appointment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("appointments.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), default="INR")
+    # razorpay, phonepe, cashfree, manual
+    gateway: Mapped[Optional[str]] = mapped_column(String(20))
+    gateway_ref: Mapped[Optional[str]] = mapped_column(String(255))
+    # pending, captured, failed, refunded
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz, onupdate=now_tz
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<Payment id={self.id} clinic={self.clinic_id} "
+            f"{self.amount} {self.currency} {self.status}>"
+        )
+
+
 # ─── Session Management ────────────────────────────────────────────────────
 
 
@@ -435,19 +478,84 @@ async def get_clinic(clinic_id: uuid.UUID) -> Optional[Clinic]:
         return await session.get(Clinic, clinic_id)
 
 
+async def list_clinics(active_only: Optional[bool] = None) -> list[Clinic]:
+    """List clinics, optionally active-only, ordered by name (admin page)."""
+    async with SessionFactory() as session:
+        query = select(Clinic)
+        if active_only is not None:
+            query = query.where(Clinic.is_active.is_(active_only))
+        query = query.order_by(Clinic.name)
+        result = await session.execute(query)
+        return list(result.scalars().all())
+
+
+async def update_clinic(
+    clinic_id: uuid.UUID, **fields: Any
+) -> Optional[Clinic]:
+    """Update editable clinic settings; returns the updated row or None."""
+    allowed = {
+        "name", "phone_number", "address", "city", "state", "pincode",
+        "closing_time", "ai_instructions", "plan", "is_active",
+    }
+    values = {k: v for k, v in fields.items() if k in allowed and v is not None}
+    values["updated_at"] = now_tz()
+    async with SessionFactory() as session:
+        stmt = (
+            update(Clinic)
+            .where(Clinic.id == clinic_id)
+            .values(**values)
+            .returning(Clinic)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one_or_none()
+
+
 async def list_clinic_calls(
     clinic_id: uuid.UUID,
     state: Optional[str] = None,
     language: Optional[str] = None,
 ) -> list[Call]:
-    """List calls for a clinic, optionally filtered by state or language."""
+    """Backward-compatible wrapper over list_calls (kept for G2 callers)."""
+    return await list_calls(
+        clinic_id=clinic_id, state=state, language=language
+    )
+
+
+async def get_call(call_id: uuid.UUID) -> Optional[Call]:
+    """Get a call by ID."""
+    async with SessionFactory() as session:
+        return await session.get(Call, call_id)
+
+
+async def list_calls(
+    clinic_id: uuid.UUID,
+    state: Optional[str] = None,
+    language: Optional[str] = None,
+    severity: Optional[str] = None,
+    from_: Optional[datetime] = None,
+    to: Optional[datetime] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[Call]:
+    """List calls for a clinic, newest first, with optional filters.
+
+    severity filters on triage_severity; from_/to bound started_at; limit
+    capped at 200 by the API router.
+    """
     async with SessionFactory() as session:
         query = select(Call).where(Call.clinic_id == clinic_id)
         if state:
             query = query.where(Call.state == state)
         if language:
             query = query.where(Call.caller_language == language)
-        query = query.order_by(Call.started_at.desc())
+        if severity:
+            query = query.where(Call.triage_severity == severity)
+        if from_:
+            query = query.where(Call.started_at >= from_)
+        if to:
+            query = query.where(Call.started_at <= to)
+        query = query.order_by(Call.started_at.desc()).limit(limit).offset(offset)
         result = await session.execute(query)
         return list(result.scalars().all())
 
@@ -548,6 +656,46 @@ async def create_appointment(
         return result.scalar_one()
 
 
+async def get_appointment(appointment_id: uuid.UUID) -> Optional[Appointment]:
+    """Get an appointment by ID."""
+    async with SessionFactory() as session:
+        return await session.get(Appointment, appointment_id)
+
+
+async def list_appointments(
+    clinic_id: uuid.UUID,
+    status: Optional[str] = None,
+    from_: Optional[datetime] = None,
+    to: Optional[datetime] = None,
+) -> list[Appointment]:
+    """List appointments for a clinic, soonest first, optional filters."""
+    async with SessionFactory() as session:
+        query = select(Appointment).where(Appointment.clinic_id == clinic_id)
+        if status:
+            query = query.where(Appointment.status == status)
+        if from_:
+            query = query.where(Appointment.scheduled_at >= from_)
+        if to:
+            query = query.where(Appointment.scheduled_at <= to)
+        query = query.order_by(Appointment.scheduled_at)
+        result = await session.execute(query)
+        return list(result.scalars().all())
+
+
+async def update_appointment_status(appointment_id: uuid.UUID, status: str) -> bool:
+    """Update appointment status; returns True if a row was updated."""
+    async with SessionFactory() as session:
+        stmt = (
+            update(Appointment)
+            .where(Appointment.id == appointment_id)
+            .values(status=status, updated_at=now_tz())
+            .returning(Appointment.id)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one_or_none() is not None
+
+
 async def create_prescription(
     clinic_id: uuid.UUID,
     patient_name: str,
@@ -579,6 +727,103 @@ async def create_prescription(
         result = await session.execute(stmt)
         await session.commit()
         return result.scalar_one()
+
+
+async def get_prescription(prescription_id: uuid.UUID) -> Optional[Prescription]:
+    """Get a prescription by ID."""
+    async with SessionFactory() as session:
+        return await session.get(Prescription, prescription_id)
+
+
+async def list_prescriptions(
+    clinic_id: uuid.UUID, status: Optional[str] = None
+) -> list[Prescription]:
+    """List prescriptions for a clinic, newest first, optional status."""
+    async with SessionFactory() as session:
+        query = select(Prescription).where(Prescription.clinic_id == clinic_id)
+        if status:
+            query = query.where(Prescription.status == status)
+        query = query.order_by(Prescription.created_at.desc())
+        result = await session.execute(query)
+        return list(result.scalars().all())
+
+
+async def update_prescription_status(prescription_id: uuid.UUID, status: str) -> bool:
+    """Update prescription status; returns True if a row was updated."""
+    async with SessionFactory() as session:
+        stmt = (
+            update(Prescription)
+            .where(Prescription.id == prescription_id)
+            .values(status=status, updated_at=now_tz())
+            .returning(Prescription.id)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one_or_none() is not None
+
+
+async def create_payment(
+    clinic_id: uuid.UUID,
+    amount: float,
+    currency: str = "INR",
+    gateway: Optional[str] = None,
+    gateway_ref: Optional[str] = None,
+    call_id: Optional[uuid.UUID] = None,
+    appointment_id: Optional[uuid.UUID] = None,
+    status: str = "pending",
+) -> Payment:
+    """Create a payment intent record (scaffold — no gateway SDK call, G6-Q5)."""
+    async with SessionFactory() as session:
+        stmt = (
+            insert(Payment)
+            .values(
+                clinic_id=clinic_id,
+                call_id=call_id,
+                appointment_id=appointment_id,
+                amount=amount,
+                currency=currency or "INR",
+                gateway=gateway,
+                gateway_ref=gateway_ref,
+                status=status,
+            )
+            .returning(Payment)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one()
+
+
+async def list_payments(
+    clinic_id: uuid.UUID, status: Optional[str] = None
+) -> list[Payment]:
+    """List payments for a clinic, newest first, optional status."""
+    async with SessionFactory() as session:
+        query = select(Payment).where(Payment.clinic_id == clinic_id)
+        if status:
+            query = query.where(Payment.status == status)
+        query = query.order_by(Payment.created_at.desc())
+        result = await session.execute(query)
+        return list(result.scalars().all())
+
+
+async def get_payment(payment_id: uuid.UUID) -> Optional[Payment]:
+    """Get a payment by ID."""
+    async with SessionFactory() as session:
+        return await session.get(Payment, payment_id)
+
+
+async def update_payment_status(payment_id: uuid.UUID, status: str) -> bool:
+    """Update payment status; returns True if a row was updated."""
+    async with SessionFactory() as session:
+        stmt = (
+            update(Payment)
+            .where(Payment.id == payment_id)
+            .values(status=status, updated_at=now_tz())
+            .returning(Payment.id)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one_or_none() is not None
 
 
 async def log_call_embedding(

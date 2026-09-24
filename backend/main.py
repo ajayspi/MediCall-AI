@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import os
 
-from app.api import voice
+from app.api import appointments, calls, clinics, payments, prescriptions, voice
 from app.db.postgres import init_db
 
 
@@ -39,8 +39,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routes (voice-first; calls/appointments/prescriptions/payments land in G4+)
+# Routes: voice-first (G4) + domain APIs (calls/appointments/prescriptions/payments/clinics)
 app.include_router(voice.router, prefix="/api/voice", tags=["voice"])
+app.include_router(clinics.router)
+app.include_router(calls.router)
+app.include_router(appointments.router)
+app.include_router(prescriptions.router)
+app.include_router(payments.router)
 
 
 @app.get("/health")
