@@ -111,3 +111,21 @@ Not specified anywhere yet, each needs a decision before build:
 - **Verify**: G3 9/9 GREEN; G1+G2 11/11 still GREEN (no regression); `py_compile` clean.
 - **Scoped out (belongs to G4)**: `services/livekit_agent.py` still restaurant-flavored end-to-end ("Mama's Pizzeria", `order_items`, `rag_menu`, `TAKING_ORDER` literal) — full agent rewrite is G4 voice-pipeline work, not G3.
 - **Next in queue**: G4 (Exotel/Knowlarity/Twilio India voice) → G5 (requirements).
+
+## Implementation Record — G4 SPEC DRAFTED, PENDING SIGN-OFF (2026-09-24)
+- **Spec**: `.opencode/spec-g4-voice-pipeline.md` (in `.worktrees\g4-voice`) — scope
+  (voice.py + livekit_agent.py + new stdlib `services/telephony.py` +
+  `services/agent_logic.py` + medical llm.py/stt.py/tts.py + postgres
+  `update_call_transcript`), evidence-backed webhook contract for all three
+  providers, RED test plan, 3 decisions (D1 transcript path, D2 escalation MVP,
+  D3 default language = hi). STOP for sign-off sent to user — no code written for G4.
+- **Startup verified GREEN 2026-09-24** on `master`: G1+G2 11/11, G3 9/9,
+  py_compile clean; branch `g4-voice` + worktree `.worktrees\g4-voice` created.
+- **Launcher fixed & committed** (master `15106d4`): `start-worktree.ps1` failed
+  to parse under PS 5.1 (UTF-8 em-dash read as ANSI → broken string terminator);
+  saved with UTF-8 BOM; `git worktree add` aborted on NativeCommandError
+  (git info writes to stderr while `$ErrorActionPreference='Stop'`) — stderr
+  quieted under a scoped EAP. Worktree copy of the launcher is stale (pre-fix);
+  always run the script from project root.
+- **Next after sign-off**: write `tests/test_g4_voice.py` RED → implement →
+  GREEN + py_compile → commit on `g4-voice` → then G5 (requirements).
