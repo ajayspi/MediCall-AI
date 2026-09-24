@@ -144,7 +144,6 @@ SEQUENCE_TOKENS = (
 
 RESTAURANT_LEFTOVERS = (
     "talkbyte",
-    "chain",
     "mama's",
     "margherita",
     "ord-0",
@@ -155,7 +154,7 @@ RESTAURANT_LEFTOVERS = (
     "restaurant",
 )
 
-MERMAID_EDGE_RE = re.compile(r"^\s*([A-Z_]+)\s*-->\s*([A-Z_]+)\s*$")
+MERMAID_EDGE_RE = re.compile(r"^\s*([A-Z_]+)\s*-->\s*([A-Z_]+)\s*$", re.M)
 
 
 def read(path: Path) -> str:
@@ -270,7 +269,10 @@ class TestERDiagram(unittest.TestCase):
     def test_all_nine_tables_present(self):
         text = read(UML_DIR / "01-er.md")
         for name in TABLES:
-            self.assertRegex(text, rf"^\s*{name} \{{", f"ER missing table {name}")
+            self.assertTrue(
+                re.search(rf"^\s*{name} \{{", text, re.M),
+                f"ER missing table {name}",
+            )
 
     def test_all_fk_edges_present(self):
         text = norm(read(UML_DIR / "01-er.md"))

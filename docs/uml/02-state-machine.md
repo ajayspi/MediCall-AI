@@ -1,0 +1,49 @@
+# 02 — Call State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> GREETING
+    GREETING --> TRIAGE
+    GREETING --> ESCALATED
+    GREETING --> DROPPED
+    TRIAGE --> APPOINTMENT
+    TRIAGE --> PRESCRIPTION
+    TRIAGE --> ESCALATED
+    TRIAGE --> DROPPED
+    APPOINTMENT --> PRESCRIPTION
+    APPOINTMENT --> PAYMENT_SENT
+    APPOINTMENT --> COMPLETE
+    APPOINTMENT --> ESCALATED
+    APPOINTMENT --> DROPPED
+    PRESCRIPTION --> PAYMENT_SENT
+    PRESCRIPTION --> COMPLETE
+    PRESCRIPTION --> ESCALATED
+    PRESCRIPTION --> DROPPED
+    PAYMENT_SENT --> COMPLETE
+    PAYMENT_SENT --> PAYMENT_EXPIRED
+    PAYMENT_SENT --> DROPPED
+    PAYMENT_EXPIRED --> APPOINTMENT
+    PAYMENT_EXPIRED --> ESCALATED
+    PAYMENT_EXPIRED --> DROPPED
+    COMPLETE --> [*]
+    ESCALATED --> [*]
+    DROPPED --> [*]
+    note right of APPOINTMENT
+        PATCH /api/calls/{call_id}/state returns 409 on invalid transition
+        (calls router validates against STATE_TRANSITIONS - model is single source)
+    end note
+```
+
+## Notes
+
+- **Single source**: `backend/app/models/call.py` — `CallState` enum (9 states) +
+  `STATE_TRANSITIONS` dict. `backend/tests/test_uml_diagrams.py` parses the dict
+  via `ast` and asserts the mermaid edge set **equals** it, so this diagram cannot
+  drift from the code.
+- **Terminal states**: `COMPLETE`, `ESCALATED`, `DROPPED` have no outgoing
+  transitions.
+- **Payment loop (G6-Q5 open)**: `PRESCRIPTION` and `APPOINTMENT` → `PAYMENT_SENT`
+  → `PAYMENT_EXPIRED` → back to `APPOINTMENT`. Real gateway SDK calls stay gated
+  until the payments decision lands; the router currently records intents only.
+- **API enforcement**: the calls router's `PATCH /{call_id}/state` rejects invalid
+  transitions with 409 (covered by `test_api_routes.py`).
