@@ -458,6 +458,77 @@ Not specified anywhere yet, each needs a decision before build:
   (per-Q1 staging): wire the guards onto the 5 domain routers + `FORCE ROW
   LEVEL SECURITY` + non-owner `medicall_app` role, then answer G6-Q5.
 
+## Implementation Record — PAYMENTS (G6-Q5) DONE (2026-09-25)
+- **Spec**: `.opencode/spec-payments.md` — APPROVED via question tool; locked:
+  **Q1=A1a** consultations + prescription refills bill (agent offers payment on
+  APPOINTMENT + PRESCRIPTION; link/UPI request to the caller's phone);
+  **Q2=A2a** kind→gateway fallback map (razorpay=payment links for
+  consultation+refill, phonepe=UPI instant fallback, cashfree=subscriptions);
+  **Q3=A3a** in-call trigger waiting in PAYMENT_SENT (captured → COMPLETE;
+  expiry → PAYMENT_EXPIRED → APPOINTMENT); **Q4=A4a** per-gateway HMAC
+  verification (Razorpay X-Razorpay-Signature, PhonePe X-VERIFY, Cashfree
+  X-Verify-Hmac-Sha256) + shared X-Service-Token + unified
+  `/api/payments/webhook` idempotent by `gateway_ref`; **Q5=A5a** stdlib layer
+  now, live SDK requests env-gated (501 without keys; manual stays keyless).
+  Branch `g-payments` off `g-enforce` tip `0e1cb87`: spec DRAFT → APPROVED →
+  RED → feat `d61a4ea` → docs (this record).
+- **RED verified**: `tests/test_payments_q5.py` 36 tests, **36 failures** on
+  the enforcement scaffold (no service module, no webhook route, no
+  kind/expires_at/unique-ref, no gateway env, no smoke webhook/501, no
+  contracts-doc webhook; all 9 prior suites + enforcement stay green; exit 1
+  intentional).
+- **GREEN verified**: new payments suite 36/36; full regression **282 total**
+  (246 prior + 36; all 11 suites PASS); `compileall` exit 0. Frontend untouched
+  (skip npm). Live SDK round-trips + webhook happy-path runtime = the ci.yml
+  stack job on a Docker host (authored, not run here — no Docker on this PC).
+- **Delivered**: `app/services/payments.py` stdlib gateway layer — PAYMENT_KINDS
+  + KIND_TO_GATEWAYS fallback map + TRANSITIONS; builders (razorpay link,
+  phonepe UPI intent, cashfree order + subscription) returning request shapes
+  (paise/rupees conversions); per-gateway signature verifiers (HMAC vectors),
+  `verify_webhook_request` dispatch, `detect_gateway`, `extract_gateway_ref`,
+  `webhook_status_for`, `next_status`; env gate (`GATEWAY_ENV_KEYS` +
+  `gateway_env_ready`) + lazy SDK `dispatch_gateway_request` (env-gated, never
+  runs on this stdlib PC). `payments.py` router: `POST /api/payments` gains
+  kind validation (kind→gateway coherence per A2a) + 501 env gate (manual
+  keyless) + 502 on dispatch failure, and new **`POST /api/payments/webhook`**
+  (`payments_webhook`) — identity-free BY DESIGN (per-gateway signature +
+  X-Service-Token), writes under `service_request_ctx()`, idempotent by
+  `gateway_ref` via new `find_payment_by_gateway_ref`, `captured` advances the
+  linked call `PAYMENT_SENT → COMPLETE` (`get_call` + `update_call_state`).
+  Schema: payments += `kind TEXT`/`expires_at TIMESTAMPTZ` (intent TTL),
+  `CREATE UNIQUE INDEX uq_payments_gateway_ref ... WHERE gateway_ref IS NOT
+  NULL` (webhook idempotency), `payments_manage` policy += the
+  `app.service_request` bypass OR-clause (userless webhook writes). ORM mirrors
+  columns; `create_payment(kind=..., expires_at=...)` (default TTL +24h).
+  Env: compose backend environment + `.env.example` carry the G5 canonical
+  gateway keys (`RAZORPAY_KEY_ID/SECRET/WEBHOOK_SECRET`,
+  `PHONEPE_MERCHANT_ID/SALT_KEY/SALT_INDEX`, `CASHFREE_APP_ID/SECRET_KEY/
+  WEBHOOK_SECRET`) + `PAYMENT_LINK_BASE_URL`. `smoke_api.py`: razorpay 501
+  env-gate check (skipped when `RAZORPAY_KEY_ID` configured — CI live
+  territory), webhook 401 no-token + 422 unknown-gateway checks, ENDPOINTS +
+  docstring updated. Tests synced: `test_api_routes.py` EXPECTED_ENDPOINTS
+  payments += `("post", "/webhook")`; `test_auth_enforcement.py` gains
+  `IDENTITY_FREE_ENDPOINTS = (("payments", "payments_webhook"),)` — the webhook
+  is the single endpoint exempt from the identity guard because its auth IS the
+  signature + service token (mirrors the VOICE_WEBHOOKS carve-out). Docs: UML
+  00/01/02/03/05/06 payments notes flipped from "G6-Q5 open/gated" to wired;
+  HANDOVER DONE record + open-list + spec index.
+- **Gotchas (one-line rules)**: a RED suite that asserts env-key names must
+  read the G5-canonical `.env.example` first — `PHONEPE_SALT_KEY/SALT_INDEX`
+  and `CASHFREE_WEBHOOK_SECRET`/`RAZORPAY_WEBHOOK_SECRET` (API secrets and
+  webhook secrets are SEPARATE vars), not first-pass guesses
+  (`PHONEPE_KEY/PHONEPE_IV` were corrected pre-GREEN); gateway webhooks are
+  naturally identity-free → the enforcement router-guard test needs an explicit
+  carve-out set, exactly like the voice webhooks; a unified webhook cannot know
+  its gateway from a field every gateway sends — `detect_gateway` infers from
+  payload shape (`event:` = razorpay, `data.order.order_id` = cashfree,
+  `data.merchantTransactionId` = phonepe), and the smoke "unknown gateway" case
+  must use a payload with NEITHER an event nor data shapes.
+- **Next**: live provider round-trips behind CI secrets (Deepgram/ElevenLabs/
+  OpenAI, LiveKit, gateway SDK dispatch + signed-webhook end-to-end) → run the
+  ci.yml stack job on a Docker host (RLS/GUC runtime proof) → merge branch
+  tips to main.
+
 ## Implementation Record — AUTH ENFORCEMENT (Q1-staged flip) DONE (2026-09-25)
 - **Spec**: `.opencode/spec-auth-enforcement.md` — APPROVED via question tool;
   locked decisions: **Q1=A1a** identity (`get_current_user`) on every domain

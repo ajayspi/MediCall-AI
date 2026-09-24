@@ -179,3 +179,6 @@ spec → (sign-off) → RED → feat (A–H) → docs (DONE record, tracker, HAN
   **Q5=A5a** stdlib gateway layer now, live SDK requests env-gated (501 without
   keys, manual stays keyless); live round-trips behind CI secrets. Test-first
   (RED → GREEN); runtime = ci.yml stack job on a Docker host.
+- **2026-09-25 GREEN** — `backend/tests/test_payments_q5.py` 36/36; regression
+  **282/282** all 11 suites; `compileall` 0. Delivered A–H (see record in the
+  master tracker). Env-name gotcha corrected pre-GREEN (G5 canonical names).

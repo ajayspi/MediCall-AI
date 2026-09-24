@@ -93,10 +93,32 @@ is the launchpad.
   Proof: `tests/test_auth_enforcement.py` 24/24 GREEN; regression
   **246/246**; compileall 0. RLS/GUC *runtime* truth = the ci.yml stack job
   on a Docker host (authored; still to run — no Docker on this PC).
-- ▶️ **NEXT: G6-Q5 payments** — real gateway wiring (Razorpay/PhonePe/
-  Cashfree; intent-only today) once Q5 is answered. Then: live
-  Deepgram/ElevenLabs/OpenAI + LiveKit room round-trips behind CI secrets; run
-  the ci.yml stack job on a Docker host; then merge branch tips to main.
+- ✅ **PAYMENTS (G6-Q5) DONE** — flows + gateway wiring decided by sign-off
+  (Q1=A1a consult+refill bill, Q2=A2a kind→gateway: razorpay=links,
+  phonepe=UPI fallback, cashfree=subscriptions, Q3=A3a in-call waits in
+  PAYMENT_SENT, Q4=A4a per-gateway HMAC + shared token + unified webhook,
+  Q5=A5a stdlib layer now / SDK env-gated). New `app/services/payments.py`
+  stdlib gateway layer: builders (link/UPI/order/subscription shapes) +
+  Razorpay/PhonePe/Cashfree webhook signature verifiers (HMAC vectors) +
+  status/ref extraction + transition rules + env gate + lazy SDK dispatch.
+  `POST /api/payments/webhook` — identity-free BY DESIGN (verified by
+  `X-Service-Token` + per-gateway signature), writes under `service_request_ctx`
+  (new `payments_manage` service clause; enforcement suite got an explicit
+  `IDENTITY_FREE_ENDPOINTS` carve-out), idempotent by `gateway_ref` (new UNIQUE
+  partial index), `captured` advances the linked call `PAYMENT_SENT → COMPLETE`.
+  `payments` += `kind`/`expires_at`; create is env-gated 501 (manual keyless);
+  compose + `.env.example` carry the G5 canonical gateway keys. Gotcha fixed in
+  RED: env-key names follow G5's `.env.example` (`PHONEPE_SALT_KEY/INDEX`,
+  `CASHFREE_WEBHOOK_SECRET`, `RAZORPAY_WEBHOOK_SECRET`), not my first-pass
+  guesses. Branch `g-payments` off `g-enforce` tip `0e1cb87` (spec DRAFT →
+  APPROVED → RED `0b12af3`-style 36 FAIL → feat `d61a4ea`). Proof:
+  `tests/test_payments_q5.py` 36/36 GREEN; regression **282/282**; compileall 0.
+  Live SDK round-trips + webhook happy-path runtime = ci.yml stack job on a
+  Docker host (authored; still to run).
+- ▶️ **NEXT: live provider round-trips behind CI secrets** (Deepgram/
+  ElevenLabs/OpenAI + LiveKit rooms + real gateway SDK dispatch + signed
+  webhook end-to-end) and **run the ci.yml stack job on a Docker host** (RLS/
+  GUC runtime proof + smoke_api.py webhook flow); then merge branch tips to main.
 - ⏳ **After**: Interactly-parity build (benchmarks + integration catalog are
   specced in `spec-multifit-healthcare.md`, NOT built).
 
@@ -112,7 +134,7 @@ is the launchpad.
 
 ## 4. Still open (answer before the session that needs them)
 G6-Q2 consent/retention (DPDP), Q3 clinical guardrails, Q4 language fallback,
-Q5 payment flows, Q8 notifications, Q9 MVP KPIs, Q10 deploy topology.
+Q8 notifications, Q9 MVP KPIs, Q10 deploy topology.
 
 ## 5. Verify first (before any edit)
 ```
@@ -130,6 +152,7 @@ tree — keep it clean; each phase gets its own `.worktrees\<name>` branch via
 
 ## 6. Spec index (`.opencode/`)
 - `spec-idea-refinement-gaps.md` — master tracker: gaps, sign-off, G-records ← START HERE
+- `spec-payments.md` — G6-Q5 payment flows + gateway wiring (Q1–Q5 APPROVED; DONE)
 - `spec-docker-ci.md` — Docker/CI phase spec (Q1 local+CI, Q2 client+2 pages, Q3 3-job workflow; DONE)
 - `spec-auth.md` — AuthN/Z (G6-Q1) + local-schema repair (Q1–Q4 APPROVED; DONE)
 - `spec-uml-diagrams.md` — UML phase spec (Mermaid, docs/uml/, 5+1 diagrams)
