@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "0.0.0.0:8001:8000"
+    environment:
+      - DATABASE_URL=postgresql://medicall:medicall@postgres:5432/medicall
+      - REDIS_URL=redis://redis:6379
+      - FRONTEND_URL=${FRONTEND_URL}
+      - DEBUG=true
+      - LOG_LEVEL=debug
+      - ENVIRONMENT=development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - medicall-local
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "0.0.0.0:3000:3000"
+    environment:
+      - NEXT_PUBLIC_BACKEND_URL=${FRONTEND_URL}
+      - NEXT_PUBLIC_ENVIRONMENT=development
+      - NEXT_PUBLIC_DEBUG=true
+    depends_on:
+      - backend
+    networks:
+      - medicall-local
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=medicall
+      - POSTGRES_PASSWORD=medicall
+      - POSTGRES_DB=medicall
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./backend/postgres_schema.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - medicall-local
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medicall -d medicall"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - medicall-local
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  medicall-local:
+    driver: bridge
