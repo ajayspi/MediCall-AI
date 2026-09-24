@@ -19,16 +19,32 @@ is the launchpad.
   Proof: `backend/tests/test_g1_g2.py` 11/11 GREEN.
 - ✅ **G3 DONE** — single medical state machine; `app/models/call.py` is the
   canonical owner (`CallState`, `TriageSeverity`, `STATE_TRANSITIONS`, 9 states,
-  terminal COMPLETE/ESCALATED/DROPPED); `postgres.py` imports from it;
-  schema comment fixed. Proof: `backend/tests/test_g3_state_machine.py` 9/9 GREEN.
-- ▶️ **NEXT: G4** — voice pipeline: rewrite `services/livekit_agent.py`
-  (still restaurant-flavored: "Mama's Pizzeria", `order_items`, `TAKING_ORDER`)
-  + Exotel/Knowlarity/Twilio-India webhooks in `app/api/voice.py`
-  (still Telnyx-US + `restaurant_id`).
-- ⏳ **After G4**: G5 (requirements: drop stripe/celery, add pytest/ruff,
-  Knowlarity client) → clinic (7-tab) + admin (9-view) dashboards → API routes
-  → UML diagrams → Interactly-parity build (benchmarks + integration catalog
-  are specced in `spec-multifit-healthcare.md`, NOT built).
+  terminal COMPLETE/ESCALATED/DROPPED); `postgres.py` imports from it.
+  Proof: `backend/tests/test_g3_state_machine.py` 9/9 GREEN.
+- ✅ **G4 DONE** — voice pipeline: Exotel/Knowlarity/Twilio-India webhooks →
+  `ProviderEvent` → LiveKit agent on the G3 state machine; 5-language STT/TTS
+  (hi/en/ta/te/bn), escalation MVP, `/call-completed` endpoint.
+  Proof: `backend/tests/test_g4_voice.py` 33/33 GREEN.
+- ✅ **G5 DONE** — `requirements.txt` rewritten (verified payment pins:
+  razorpay==2.0.1, phonepe-pg-sdk-python==2.3.0, cashfree-pg==6.0.1; dev:
+  pytest 8.3.5, pytest-asyncio 0.25.3, ruff 0.11.9); in-house httpx Knowlarity
+  SR client. Proof: `backend/tests/test_g5_reqs.py` 18/18 GREEN.
+- ✅ **DASHBOARDS DONE** — clinic (7-tab) + admin (9-view) shells, Tailwind v4
+  CSS-first teal tokens, 16 mock pages (`mock.ts`), nav.ts single source.
+  Proof: `backend/tests/test_dashboards.py` 34/34 GREEN.
+- ✅ **API ROUTES DONE** — `clinics`/`calls`/`appointments`/`prescriptions`/
+  `payments` routers + `app/schemas/` package + postgres CRUD + new `payments`
+  table; `main.py` registers all 6 routers. Payments = scaffold only (G6-Q5
+  still open — records intent, never calls a gateway SDK). Branch
+  `ga-api-routes` off `gd-dashboards` tip. Live wiring of the 16 pages moves to
+  Docker/CI (D1). Proof: `backend/tests/test_api_routes.py` 36/36 GREEN.
+- ▶️ **NEXT: UML diagrams** (ER / state machine / API contracts / data flow /
+  deployment) → **then Docker/CI integration stage** (frontend wiring to the
+  API routes, `next build`, live Deepgram/ElevenLabs/OpenAI, LiveKit room
+  lifecycle, `/call-completed` → `update_call_transcript` DB path, ruff
+  actually run).
+- ⏳ **After**: Interactly-parity build (benchmarks + integration catalog are
+  specced in `spec-multifit-healthcare.md`, NOT built).
 
 ## 3. Decisions already locked (do not relitigate)
 - G1–G7 = the complete fix list (approved 2026-09-22).
