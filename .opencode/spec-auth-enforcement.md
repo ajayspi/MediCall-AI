@@ -162,3 +162,7 @@ tracker, HANDOVER, 03-api-contracts).
 ---
 ### Status
 - **2026-09-25 DRAFT** — research done; awaiting Q1–Q4 sign-off.
+- **2026-09-25 APPROVED** — sign-off via question tool: Q1=A1a (identity everywhere +
+  owner gate on clinic create), Q2=A2a (shared service token + service_request GUC),
+  Q3=A3a (schema-seeded demo tenant), Q4=A4a (engine begin-event GUC + service bypass on
+  auth CRUD). Implementation test-first (RED → GREEN); RLS/GUC runtime proof = CI stack job.
