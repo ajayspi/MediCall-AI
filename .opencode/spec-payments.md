@@ -167,3 +167,15 @@ spec → (sign-off) → RED → feat (A–H) → docs (DONE record, tracker, HAN
 - **2026-09-25 DRAFT** — research done (current surface, state-machine loop,
   RLS interplay, gateways pinned); awaiting Q1–Q5 sign-off. No implementation
   before approval.
+- **2026-09-25 APPROVED** — sign-off via question tool: **Q1=A1a** consultations
+  AND prescription refills bill (agent offers payment on APPOINTMENT +
+  PRESCRIPTION; link/UPI request goes to the caller's phone), **Q2=A2a** locked
+  kind→gateway map + fallback (razorpay=links for consultation+refill,
+  phonepe=UPI instant, cashfree=subscriptions), **Q3=A3a** in-call trigger that
+  waits in PAYMENT_SENT (captured → COMPLETE; expiry → PAYMENT_EXPIRED →
+  APPOINTMENT), **Q4=A4a** per-gateway HMAC verification (Razorpay
+  X-Razorpay-Signature, PhonePe X-VERIFY, Cashfree HMAC header) + shared
+  X-Service-Token + unified `/api/payments/webhook` idempotent by gateway_ref,
+  **Q5=A5a** stdlib gateway layer now, live SDK requests env-gated (501 without
+  keys, manual stays keyless); live round-trips behind CI secrets. Test-first
+  (RED → GREEN); runtime = ci.yml stack job on a Docker host.
