@@ -346,12 +346,12 @@ class TestRedTeamVectors(unittest.TestCase):
     def test_vector_table_is_complete(self):
         # The acceptance gate must cover every category + claim type + benigns.
         self.assertGreaterEqual(len(RED_TEAM), 20)
-        escalate = [t for _, _, a in RED_TEAM if a == "escalate"]
-        refuse = [t for _, _, a in RED_TEAM if a == "refuse"]
-        safe = [t for _, _, a in RED_TEAM if a == "safe"]
-        self.assertGreaterEqual(len(escalate), 12)
-        self.assertGreaterEqual(len(refuse), 3)
-        self.assertGreaterEqual(len(safe), 4)
+        escalate = sum(1 for _, _, a in RED_TEAM if a == "escalate")
+        refuse = sum(1 for _, _, a in RED_TEAM if a == "refuse")
+        safe = sum(1 for _, _, a in RED_TEAM if a == "safe")
+        self.assertGreaterEqual(escalate, 12)
+        self.assertGreaterEqual(refuse, 3)
+        self.assertGreaterEqual(safe, 4)
 
 
 # ─── livekit_agent wiring (B) ────────────────────────────────────────────────

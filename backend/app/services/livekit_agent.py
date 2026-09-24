@@ -13,6 +13,7 @@ from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli
 
 from app.models.call import Call, CallState
 from app.services import agent_logic
+from app.services import guardrails
 from app.services.llm import generate_response
 from app.services.tts import tts_stream
 
@@ -71,6 +72,24 @@ async def entrypoint(ctx: JobContext):
             transcript = agent_logic.append_transcript(
                 transcript, "caller", user_text, call.caller_language
             )
+            # G6-Q3 deterministic path (temperature≈0): a red-flag keyword
+            # beats any LLM severity judgment — escalate now, no generation.
+            red_flag = guardrails.match_red_flag(user_text)
+            if red_flag is not None:
+                call.triage_severity = "red"
+                transcript = agent_logic.append_transcript(
+                    transcript, "system", f"red_flag:{red_flag[0]}",
+                    call.caller_language,
+                )
+                async for chunk in tts_stream(
+                    guardrails.ESCALATE_PHRASES.get(
+                        call.caller_language,
+                        "Connecting you to a specialist. Please stay on the line.",
+                    ),
+                    language=call.caller_language,
+                ):
+                    await ctx.room.local_participant.publish_audio(chunk)
+                break
             messages = [{"role": "user", "content": user_text}]
             response = await generate_response(
                 messages=messages,
@@ -85,10 +104,14 @@ async def entrypoint(ctx: JobContext):
                     call, fn_call.name, parse_function_arguments(fn_call)
                 )
                 if call.state == CallState.ESCALATED:
-                    # D2 escalation MVP: flag + message + room event for the
+                    # D2 escalation MVP → G6-Q3: per-language phrase (EN keeps
+                    # the specialist text); flag + message + room event for the
                     # operator UI; PSTN warm-transfer stub lands in integration.
                     async for chunk in tts_stream(
-                        "Connecting you to a specialist. Please stay on the line.",
+                        guardrails.ESCALATE_PHRASES.get(
+                            call.caller_language,
+                            "Connecting you to a specialist. Please stay on the line.",
+                        ),
                         language=call.caller_language,
                     ):
                         await ctx.room.local_participant.publish_audio(chunk)
@@ -97,7 +120,14 @@ async def entrypoint(ctx: JobContext):
                     break
             else:
                 content = getattr(response, "content", None) or ""
-                async for chunk in tts_stream(content, language=call.caller_language):
+                # G6-Q3: no-diagnosis/no-dosage from AI — guard before TTS so a
+                # forbidden claim is never spoken (Q2/A2a deterministic guard).
+                safe_text, _flag, _reason = guardrails.guard_output(
+                    content, language=call.caller_language
+                )
+                async for chunk in tts_stream(
+                    safe_text, language=call.caller_language
+                ):
                     await ctx.room.local_participant.publish_audio(chunk)
 
     # D1: persist transcript via POST /api/voice/call-completed (agent worker →
