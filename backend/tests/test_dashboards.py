@@ -56,13 +56,13 @@ CLINIC_TABS = [
     "/analytics",
 ]
 CLINIC_TAB_FILES = [
-    ("dashboard", "dashboard"),
-    ("live-calls", "live-calls"),
-    ("triage-queue", "triage-queue"),
-    ("appointments", "appointments"),
-    ("prescriptions", "prescriptions"),
-    ("patients", "patients"),
-    ("analytics", "analytics"),
+    ("dashboard", "page"),
+    ("live-calls", "page"),
+    ("triage-queue", "page"),
+    ("appointments", "page"),
+    ("prescriptions", "page"),
+    ("patients", "page"),
+    ("analytics", "page"),
 ]
 ADMIN_VIEWS = [
     "/admin",

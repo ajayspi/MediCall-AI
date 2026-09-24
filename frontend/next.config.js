@@ -2,9 +2,6 @@
 const nextConfig = {
   output: 'standalone',
   reactStrictMode: true,
-  images: {
-    domains: ['your-supabase-project.supabase.co'],
-  },
   async rewrites() {
     return [
       {
