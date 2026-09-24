@@ -74,9 +74,27 @@ is the launchpad.
   docs 01-er (10 tables/14 edges) + 03-api-contracts (`/api/auth`). Branch
   `g-auth` off `g-ci` tip `81587ef`. Proof: `tests/test_auth.py` 42/42 GREEN;
   regression **222/222**; compileall 0; eslint 0; next build exit 0 (20 routes).
-- ▶️ **NEXT: Auth ENFORCEMENT (Q1-staged)** — wire the guards onto the 5 domain
-  routers + `FORCE ROW LEVEL SECURITY` + non-owner `medicall_app` role (flip
-  together). Then: payments real gateway wiring once G6-Q5 is answered; live
+- ✅ **AUTH ENFORCEMENT (Q1-staged) DONE** — the 5 domain routers are now
+  identity-gated end-to-end: every endpoint takes `Depends(get_current_user)`
+  (401 without a Bearer JWT), `POST /api/clinics` additionally
+  `require_roles("owner")` (403 for staff) and auto-appoints the creator as
+  clinic owner. RLS flips together: `medicall_app` non-owner LOGIN role +
+  `FORCE ROW LEVEL SECURITY` on all 7 tenant tables + demo tenant seed (owner
+  `+919876543210`/`DemoPass!2026`). Per-transaction RLS GUCs via
+  ContextVars + engine `begin` listener (`SET LOCAL app.current_user_id` /
+  `app.service_request`); service bypass armed on auth CRUD + verified
+  webhooks (`X-Service-Token` == `WEBHOOK_SERVICE_TOKEN`, 401 otherwise;
+  new `calls_update` policy for state/transcript UPDATEs). Voice
+  `call_completed` persists transcripts under the bypass. `smoke_api.py` is
+  auth-first (demo-owner login → Bearer everywhere) with 401/403 negative
+  checks; compose + `.env.example` connect as `medicall_app` with
+  `WEBHOOK_SERVICE_TOKEN`. Branch `g-enforce` off `g-auth` tip `c6b59ff`
+  (spec `0d918f8` → APPROVED `e6533dc` → RED `0b12af3` → feat `69b9eae`).
+  Proof: `tests/test_auth_enforcement.py` 24/24 GREEN; regression
+  **246/246**; compileall 0. RLS/GUC *runtime* truth = the ci.yml stack job
+  on a Docker host (authored; still to run — no Docker on this PC).
+- ▶️ **NEXT: G6-Q5 payments** — real gateway wiring (Razorpay/PhonePe/
+  Cashfree; intent-only today) once Q5 is answered. Then: live
   Deepgram/ElevenLabs/OpenAI + LiveKit room round-trips behind CI secrets; run
   the ci.yml stack job on a Docker host; then merge branch tips to main.
 - ⏳ **After**: Interactly-parity build (benchmarks + integration catalog are

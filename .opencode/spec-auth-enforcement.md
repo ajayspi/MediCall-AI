@@ -166,3 +166,13 @@ tracker, HANDOVER, 03-api-contracts).
   owner gate on clinic create), Q2=A2a (shared service token + service_request GUC),
   Q3=A3a (schema-seeded demo tenant), Q4=A4a (engine begin-event GUC + service bypass on
   auth CRUD). Implementation test-first (RED → GREEN); RLS/GUC runtime proof = CI stack job.
+- **2026-09-25 GREEN** — feat `69b9eae` (deliverables B–G) verified: new suite
+  24/24; full regression **246/246** (all 10 suites PASS); `compileall` exit 0;
+  frontend untouched this phase (skip npm). RED `0b12af3` at 22 failures + 0
+  errors (baseline, exit 1). docs commit follows with this status. Remaining
+  gate: RLS/GUC **runtime** proof = ci.yml stack job on a Docker host (no
+  Docker on this PC — authored, still to run). Demo owner
+  `+919876543210`/`DemoPass!2026` owns the seeded "City Care Demo" clinic.
+  Implementation-discovered refinement: `calls_update` RLS policy (calls had
+  INSERT/SELECT policies only → state/transcript UPDATEs were deny-all under
+  FORCE; now membership OR service).

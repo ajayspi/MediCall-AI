@@ -454,7 +454,58 @@ Not specified anywhere yet, each needs a decision before build:
   parsing dies on inline `;` inside SQL comments (`(India; NULL…)`) — bound
   blocks by the NEXT `CREATE TABLE` instead; `test_main_registers_all_*_routers`
   is an EXACT set-equality — adding a router requires syncing it.
-- **Next**: auth enforcement phase (per-Q1 staging): wire the guards onto the 5
-  domain routers + `FORCE ROW LEVEL SECURITY` + non-owner `medicall_app` role →
-  answer G6-Q5 (payments) → live provider round-trips behind CI secrets → run
-  ci.yml stack job on a Docker host → merge branch tips to main.
+- **Next (DONE — see the record below this one)**: auth enforcement phase
+  (per-Q1 staging): wire the guards onto the 5 domain routers + `FORCE ROW
+  LEVEL SECURITY` + non-owner `medicall_app` role, then answer G6-Q5.
+
+## Implementation Record — AUTH ENFORCEMENT (Q1-staged flip) DONE (2026-09-25)
+- **Spec**: `.opencode/spec-auth-enforcement.md` — APPROVED via question tool;
+  locked decisions: **Q1=A1a** identity (`get_current_user`) on every domain
+  endpoint + `require_roles("owner")` on `POST /api/clinics` only; **Q2=A2a**
+  voice webhooks verify `X-Service-Token` == `WEBHOOK_SERVICE_TOKEN` (401
+  without) and arm the server-side `app.service_request` GUC, honored only by
+  `users_own_data`/`calls_create`/`calls_read` (per-provider HMAC = follow-up);
+  **Q3=A3a** demo tenant seeded in `postgres_schema.sql` (fixed UUIDs,
+  `ON CONFLICT DO NOTHING`); **Q4=A4a** engine `begin`-event listener issues
+  `SET LOCAL app.current_user_id`/`app.service_request` per transaction, with
+  service_request armed inside the 5 auth CRUD helpers + verified webhooks.
+  Branch `g-enforce` off `g-auth` tip `c6b59ff`: spec `0d918f8` → APPROVED
+  `e6533dc` → RED `0b12af3` → feat `69b9eae` → docs (this record).
+- **RED verified**: `tests/test_auth_enforcement.py` 24 tests, **22 failures +
+  0 errors** (every missing artifact mapped; 9 existing suites stay green;
+  exit 1 intentional).
+- **GREEN verified**: new enforcement suite 24/24; full regression **246
+  total** (222 prior + 24; all 10 suites PASS); `compileall` exit 0. Frontend
+  untouched (skip npm). RLS/GUC runtime truth = the ci.yml stack job on a
+  Docker host (authored, not run here — no Docker on this PC).
+- **Delivered**: `medicall_app` LOGIN role + `FORCE ROW LEVEL SECURITY` ×7
+  tenant tables; service_request bypass on `users_own_data`/`calls_create`/
+  `calls_read`; new policies `clinic_users_own`/`clinic_users_manage`/
+  `clinic_users_service_insert` (service-only INSERT closes self-insert-any-
+  clinic) + `clinics_create` (`FOR INSERT WITH CHECK` global-owner) +
+  **`calls_update`** (discovered gap: calls had INSERT/SELECT policies only →
+  state/transcript UPDATEs were deny-all under FORCE; now membership OR
+  service). Guards on all 5 routers (dep `Depends(get_current_user)`; owner
+  gate + creator-membership on create). `postgres.py`: contextvar GUCs +
+  `engine.sync_engine` `begin`-listener (`SET LOCAL`), `service_request_ctx()`
+  contextmanager, all 5 auth CRUD fns armed, `create_clinic(owner_user_id=…)`
+  inserts the owner membership in one transaction, and `get_current_user` sets
+  the GUC from the token BEFORE its own user lookup. `voice.py`:
+  `_verify_service_token` (hmac.compare_digest; env default
+  `dev-service-token`) on all 5 webhooks; `call_completed` persists the
+  transcript under `service_request_ctx()` (lazy import line preserved for
+  test_docker_ci). `smoke_api.py` auth-first — demo owner
+  `+919876543210`/`DemoPass!2026` → Bearer on every domain call — plus 401/403
+  negative checks and `X-Service-Token` on call-completed. compose backend env
+  + `backend/.env.example`: `medicall_app` DSN + `WEBHOOK_SERVICE_TOKEN` +
+  demo creds note. Docs: `03-api-contracts.md` enforcement bullets; HANDOVER.
+- **Gotchas (one-line rules)**: FastAPI untyped `user=Depends(...)` params
+  carry the guard in the DEFAULT, not the annotation — the enforcement test
+  inspects both (AST `arguments.defaults` map positionally to the trailing
+  args; `ast.arg` has no `.default` attribute); test_docker_ci asserts the
+  EXACT lazy line `from app.db.postgres import update_call_transcript` — keep
+  `service_request_ctx` on its own import line; `fn_block` helpers slice by
+  LINE (`splitlines(keepends=True)`), never flat character offsets.
+- **Next**: answer G6-Q5 (payment flows/gateway — real gateway calls stay
+  gated) → live provider round-trips behind CI secrets → run the ci.yml stack
+  job on a Docker host → merge branch tips to main.

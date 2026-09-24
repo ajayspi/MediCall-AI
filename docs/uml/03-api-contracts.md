@@ -38,5 +38,19 @@ flowchart LR
   (`/api/auth/register|login|otp/*`); `GET /me` requires a Bearer JWT;
   SSO (`/oauth/{provider}`) returns 501 until the Google/Microsoft/ABHA env
   keys are configured.
+- **Enforcement (spec-auth-enforcement.md): every domain endpoint on the five
+  routers is identity-gated** — a Bearer JWT is required (401 without it; the
+  JWT's `sub` sets the per-request RLS GUC `app.current_user_id`). Only
+  `POST /api/clinics` additionally demands the platform `owner` role (403 for
+  staff); the creator automatically becomes the clinic's owner. Unauthenticated
+  calls, staff clinic-creation, and expired/invalid tokens are all smoke-tested.
+- **Voice webhooks (`/api/voice/*`) are service-token gated** — every callback
+  must send `X-Service-Token` == `WEBHOOK_SERVICE_TOKEN` (env; dev default
+  `dev-service-token`) or it 401s. Verified requests run the transcript write
+  under the server-side `app.service_request` RLS bypass (`calls_update`).
+- **Postgres connects as the non-owner `medicall_app` role; all 7 tenant tables
+  have RLS FORCED** — row visibility is scoped by `clinic_users` membership
+  (identity GUC) rather than by application filtering. The seeded demo owner is
+  `+919876543210` / `DemoPass!2026` (creates + owns "City Care Demo").
 - `POST /api/payments` records an intent row only; it never calls a gateway SDK
   (G6-Q5 gated).
