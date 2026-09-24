@@ -12,8 +12,9 @@ typed models mirroring backend/postgres_schema.sql.
 
 import os
 import uuid
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -28,6 +29,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
     insert,
     select,
     text,
@@ -79,6 +81,61 @@ def get_engine() -> AsyncEngine:
 
 engine: AsyncEngine = get_engine()
 SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
+
+
+# ─── RLS GUC plumbing (spec-auth-enforcement.md Q4/A4a) ──────────────────────
+# Every transaction on the shared engine sets the RLS GUCs from request-scoped
+# contextvars, so `auth.uid()` (postgres_schema.sql) always sees the current
+# request's user — in the auth dependency's own session, in get_db_session, and
+# in every CRUD function's private SessionFactory() session. `SET LOCAL` is
+# transaction-scoped: pooled connections reset automatically, so one request's
+# user id can never leak into the next request.
+
+_current_user_id: ContextVar[Optional[str]] = ContextVar(
+    "current_user_id", default=None
+)
+_service_request: ContextVar[bool] = ContextVar("service_request", default=False)
+
+
+def set_current_user_id(value: Optional[str]) -> None:
+    """Record the authenticated user for the request's DB transactions.
+
+    Called by the get_current_user dependency AFTER token decode and BEFORE any
+    query (auth.uid() then scopes every policy to this user). Database ids are
+    stripped of quotes defensively before being inlined into the GUC SQL.
+    """
+    _current_user_id.set(value.replace("'", "") if value else None)
+
+
+@contextmanager
+def service_request_ctx() -> Iterator[None]:
+    """Arm the server-side service bypass for the wrapped block.
+
+    Only pre-authentication paths use this (auth user CRUD, verified voice
+    webhooks, create_clinic's owner-membership insert). The policies in
+    postgres_schema.sql decide what a service-armed transaction may touch
+    (users_own_data, calls_create/calls_read, clinic_users_service_insert).
+    External callers cannot set Postgres GUCs over HTTP — arming is server-side
+    authority only.
+    """
+    token = _service_request.set(True)
+    try:
+        yield
+    finally:
+        _service_request.reset(token)
+
+
+@event.listens_for(engine.sync_engine, "begin")
+def _set_rls_gucs(conn) -> None:
+    """SET LOCAL the RLS GUCs at the start of every transaction."""
+    uid = _current_user_id.get()
+    conn.exec_driver_sql(
+        "SET LOCAL app.current_user_id = " + ("'" + uid + "'" if uid else "NULL")
+    )
+    conn.exec_driver_sql(
+        "SET LOCAL app.service_request = "
+        + ("'on'" if _service_request.get() else "'off'")
+    )
 
 
 # ─── Base & Helpers ────────────────────────────────────────────────────────
@@ -487,9 +544,17 @@ async def create_clinic(
     phone_number: str,
     city: str,
     state: str,
+    owner_user_id: Optional[uuid.UUID] = None,
     **kwargs: Any,
 ) -> Clinic:
-    """Create a new clinic."""
+    """Create a new clinic + the creator's owner membership row.
+
+    The clinics_create RLS policy requires a global-owner user (the router gates
+    this endpoint with require_roles('owner')) and clinic_users_service_insert
+    permits the membership insert only on the server-side service path — both
+    supplied here, in one transaction. Without the membership row, RLS would
+    hide the new clinic from its own creator.
+    """
     async with SessionFactory() as session:
         stmt = (
             insert(Clinic)
@@ -502,9 +567,19 @@ async def create_clinic(
             )
             .returning(Clinic)
         )
-        result = await session.execute(stmt)
-        await session.commit()
-        return result.scalar_one()
+        with service_request_ctx():
+            result = await session.execute(stmt)
+            clinic = result.scalar_one()
+            if owner_user_id is not None:
+                await session.execute(
+                    insert(ClinicUser).values(
+                        clinic_id=clinic.id,
+                        user_id=owner_user_id,
+                        role="owner",
+                    )
+                )
+            await session.commit()
+        return clinic
 
 
 async def get_clinic(clinic_id: uuid.UUID) -> Optional[Clinic]:
@@ -922,22 +997,27 @@ async def create_user(
     email: Optional[str] = None,
     role: str = "staff",
 ) -> User:
-    """Create an application user (register flow)."""
-    async with SessionFactory() as session:
-        stmt = (
-            insert(User)
-            .values(
-                name=name,
-                phone=phone,
-                email=(email or "").lower() or None,
-                password_hash=password_hash,
-                role=role,
+    """Create an application user (register flow).
+
+    Pre-authentication code path: runs with NO current user, so the service
+    bypass is armed (users_own_data OR app.service_request allows the insert).
+    """
+    with service_request_ctx():
+        async with SessionFactory() as session:
+            stmt = (
+                insert(User)
+                .values(
+                    name=name,
+                    phone=phone,
+                    email=(email or "").lower() or None,
+                    password_hash=password_hash,
+                    role=role,
+                )
+                .returning(User)
             )
-            .returning(User)
-        )
-        result = await session.execute(stmt)
-        await session.commit()
-        return result.scalar_one()
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.scalar_one()
 
 
 async def get_user(user_id: uuid.UUID) -> Optional[User]:
@@ -947,63 +1027,80 @@ async def get_user(user_id: uuid.UUID) -> Optional[User]:
 
 
 async def find_user(username: str) -> Optional[User]:
-    """Find a user by phone (exact) or email (case-insensitive)."""
-    async with SessionFactory() as session:
-        if username.startswith("+"):
-            stmt = select(User).where(User.phone == username)
-        else:
-            stmt = select(User).where(User.email == username.strip().lower())
-        result = await session.execute(stmt)
-        return result.scalar_one_or_none()
+    """Find a user by phone (exact) or email (case-insensitive).
+
+    Pre-authentication (login/OTP lookup): service bypass armed so the row is
+    visible before any token exists.
+    """
+    with service_request_ctx():
+        async with SessionFactory() as session:
+            if username.startswith("+"):
+                stmt = select(User).where(User.phone == username)
+            else:
+                stmt = select(User).where(User.email == username.strip().lower())
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
 
 
 async def set_user_otp(
     user_id: uuid.UUID, code_hash: str, expires_at: datetime
 ) -> None:
-    """Store the hashed OTP + expiry; resets the attempt counter."""
-    async with SessionFactory() as session:
-        stmt = (
-            update(User)
-            .where(User.id == user_id)
-            .values(
-                otp_code_hash=code_hash,
-                otp_expires_at=expires_at,
-                otp_attempts=0,
-                updated_at=now_tz(),
+    """Store the hashed OTP + expiry; resets the attempt counter.
+
+    Pre-authentication path -> service bypass armed.
+    """
+    with service_request_ctx():
+        async with SessionFactory() as session:
+            stmt = (
+                update(User)
+                .where(User.id == user_id)
+                .values(
+                    otp_code_hash=code_hash,
+                    otp_expires_at=expires_at,
+                    otp_attempts=0,
+                    updated_at=now_tz(),
+                )
+                .returning(User.id)
             )
-            .returning(User.id)
-        )
-        await session.execute(stmt)
-        await session.commit()
+            await session.execute(stmt)
+            await session.commit()
 
 
 async def bump_user_otp_attempts(user_id: uuid.UUID) -> int:
-    """Increment the failed-OTP counter; returns the new count."""
-    async with SessionFactory() as session:
-        user = await session.get(User, user_id)
-        if user is None:
-            return 0
-        user.otp_attempts = (user.otp_attempts or 0) + 1
-        await session.commit()
-        return user.otp_attempts
+    """Increment the failed-OTP counter; returns the new count.
+
+    Pre-authentication path -> service bypass armed.
+    """
+    with service_request_ctx():
+        async with SessionFactory() as session:
+            user = await session.get(User, user_id)
+            if user is None:
+                return 0
+            user.otp_attempts = (user.otp_attempts or 0) + 1
+            await session.commit()
+            return user.otp_attempts
 
 
 async def clear_user_otp(user_id: uuid.UUID) -> None:
-    """Wipe OTP state after a successful verification."""
-    async with SessionFactory() as session:
-        stmt = (
-            update(User)
-            .where(User.id == user_id)
-            .values(
-                otp_code_hash=None,
-                otp_expires_at=None,
-                otp_attempts=0,
-                updated_at=now_tz(),
+    """Wipe OTP state after a successful verification.
+
+    Pre-authentication path -> service bypass armed.
+    """
+    with service_request_ctx():
+        async with SessionFactory() as session:
+            stmt = (
+                update(User)
+                .where(User.id == user_id)
+                .values(
+                    otp_code_hash=None,
+                    otp_expires_at=None,
+                    otp_attempts=0,
+                    updated_at=now_tz(),
+                )
+                .returning(User.id)
             )
-            .returning(User.id)
-        )
-        await session.execute(stmt)
-        await session.commit()
+            await session.execute(stmt)
+            await session.commit()
 
 
 async def list_clinic_memberships(user_id: uuid.UUID) -> list[ClinicUser]:

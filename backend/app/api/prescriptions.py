@@ -5,8 +5,9 @@ prescription.py single source) — invalid status = 422, missing row = 404.
 """
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.auth import get_current_user
 from app.db.postgres import (
     create_prescription,
     get_prescription,
@@ -49,7 +50,9 @@ def _uuid(value: str, what: str) -> uuid.UUID:
 
 
 @router.get("")
-async def list_prescriptions_ep(clinic_id: str, status: str = ""):
+async def list_prescriptions_ep(
+    clinic_id: str, status: str = "", user=Depends(get_current_user)
+):
     """List prescriptions for a clinic, optional status filter."""
     cid = _uuid(clinic_id, "clinic_id")
     if status and status not in PRESCRIPTION_STATUSES:
@@ -59,7 +62,7 @@ async def list_prescriptions_ep(clinic_id: str, status: str = ""):
 
 
 @router.post("", status_code=201)
-async def create_prescription_ep(data: PrescriptionCreate):
+async def create_prescription_ep(data: PrescriptionCreate, user=Depends(get_current_user)):
     """Create a prescription (from call triage or doctor review)."""
     cid = _uuid(data.clinic_id, "clinic_id")
     caller_id = _uuid(data.caller_id, "caller_id") if data.caller_id else None
@@ -79,7 +82,7 @@ async def create_prescription_ep(data: PrescriptionCreate):
 
 
 @router.get("/{prescription_id}")
-async def get_prescription_ep(prescription_id: str):
+async def get_prescription_ep(prescription_id: str, user=Depends(get_current_user)):
     """Prescription detail."""
     pid = _uuid(prescription_id, "prescription_id")
     row = await get_prescription(pid)
@@ -90,7 +93,9 @@ async def get_prescription_ep(prescription_id: str):
 
 @router.patch("/{prescription_id}/status")
 async def update_prescription_status_ep(
-    prescription_id: str, data: PrescriptionStatusUpdate
+    prescription_id: str,
+    data: PrescriptionStatusUpdate,
+    user=Depends(get_current_user),
 ):
     """Update prescription status (pending/approved/sent_pharmacy/dispensed)."""
     if data.status not in PRESCRIPTION_STATUSES:

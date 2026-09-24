@@ -31,6 +31,8 @@ from app.db.postgres import (
     get_user,
     list_clinic_memberships,
     now_tz,
+    service_request_ctx,
+    set_current_user_id,
     set_user_otp,
 )
 from app.services import auth as authsvc
@@ -69,7 +71,12 @@ def _token_response(user) -> dict:
 async def get_current_user(
     request: Request, db: AsyncSession = Depends(get_db_session)
 ):
-    """Bearer-token auth dependency: returns the active User or 401."""
+    """Bearer-token auth dependency: returns the active User or 401.
+
+    Sets the per-request RLS GUC (app.current_user_id) from the token sub
+    BEFORE the user lookup, so the users_own_data policy sees auth.uid() and
+    admits the current request's own row under FORCE RLS + medicall_app.
+    """
     authz = request.headers.get("Authorization", "")
     if not authz.lower().startswith("bearer "):
         raise HTTPException(401, "missing bearer token")
@@ -80,7 +87,9 @@ async def get_current_user(
         raise HTTPException(401, "token expired") from exc
     except authsvc.InvalidTokenError as exc:
         raise HTTPException(401, "invalid token") from exc
-    user = await get_user(uuid.UUID(payload["sub"]))
+    uid = str(uuid.UUID(payload["sub"]))
+    set_current_user_id(uid)
+    user = await get_user(uuid.UUID(uid))
     if user is None or not user.is_active:
         raise HTTPException(401, "unknown or inactive user")
     return user

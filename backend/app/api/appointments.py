@@ -6,8 +6,9 @@ appointment.py single source) — invalid status = 422, missing row = 404.
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.api.auth import get_current_user
 from app.db.postgres import (
     create_appointment,
     get_appointment,
@@ -63,6 +64,7 @@ async def list_appointments_ep(
     status: str = "",
     from_: str = Query("", alias="from"),
     to: str = Query("", alias="to"),
+    user=Depends(get_current_user),
 ):
     """List appointments for a clinic, soonest first, optional status/date."""
     cid = _uuid(clinic_id, "clinic_id")
@@ -78,7 +80,7 @@ async def list_appointments_ep(
 
 
 @router.post("", status_code=201)
-async def create_appointment_ep(data: AppointmentCreate):
+async def create_appointment_ep(data: AppointmentCreate, user=Depends(get_current_user)):
     """Create an appointment (from call triage or manual booking)."""
     cid = _uuid(data.clinic_id, "clinic_id")
     scheduled = _parse_dt(data.scheduled_at, "scheduled_at")
@@ -100,7 +102,7 @@ async def create_appointment_ep(data: AppointmentCreate):
 
 
 @router.get("/{appointment_id}")
-async def get_appointment_ep(appointment_id: str):
+async def get_appointment_ep(appointment_id: str, user=Depends(get_current_user)):
     """Appointment detail."""
     aid = _uuid(appointment_id, "appointment_id")
     row = await get_appointment(aid)
@@ -111,7 +113,9 @@ async def get_appointment_ep(appointment_id: str):
 
 @router.patch("/{appointment_id}/status")
 async def update_appointment_status_ep(
-    appointment_id: str, data: AppointmentStatusUpdate
+    appointment_id: str,
+    data: AppointmentStatusUpdate,
+    user=Depends(get_current_user),
 ):
     """Update appointment status (pending/confirmed/completed/cancelled/no_show)."""
     if data.status not in APPOINTMENT_STATUSES:

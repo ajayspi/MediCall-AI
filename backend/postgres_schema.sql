@@ -312,6 +312,12 @@ $$;
 -- locally so the schema loads on plain PostgreSQL instead of failing).
 CREATE ROLE authenticated NOLOGIN;
 
+-- Runtime connection role for the API (spec-auth-enforcement.md Q4/A4a): a
+-- NON-owner so RLS applies to every API statement even without FORCE. DDL
+-- (init_db / schema load) still runs as the owner (medicall). Dev creds only —
+-- prod overrides via DATABASE_URL + role provisioning.
+CREATE ROLE medicall_app LOGIN PASSWORD 'medicall_app';
+
 -- Row Level Security (RLS) — multi-tenant data isolation
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE clinics ENABLE ROW LEVEL SECURITY;
@@ -320,6 +326,19 @@ ALTER TABLE calls ENABLE ROW LEVEL SECURITY;
 ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE prescriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
+
+-- FORCE the flip (spec-auth-enforcement.md): the owner (medicall) must not
+-- bypass RLS once the runtime connects as medicall_app; FORCE makes the
+-- policies binding for EVERY role, including the table owner. These 7 tenant
+-- tables are the only RLS-enabled ones (language_codes is read-only reference
+-- data and deliberately left out).
+ALTER TABLE users FORCE ROW LEVEL SECURITY;
+ALTER TABLE clinics FORCE ROW LEVEL SECURITY;
+ALTER TABLE clinic_users FORCE ROW LEVEL SECURITY;
+ALTER TABLE calls FORCE ROW LEVEL SECURITY;
+ALTER TABLE appointments FORCE ROW LEVEL SECURITY;
+ALTER TABLE prescriptions FORCE ROW LEVEL SECURITY;
+ALTER TABLE payments FORCE ROW LEVEL SECURITY;
 
 -- Clinic owners see their own clinic data
 CREATE POLICY clinic_own_data ON clinics
@@ -330,9 +349,16 @@ CREATE POLICY clinic_own_data ON clinics
         )
     );
 
--- Users manage their own profile row
+-- Users manage their own profile row. An authenticated request sees only its
+-- own row (auth.uid() = id); the server-side auth service path (login/OTP/
+-- register lookups + writes, which run BEFORE any token exists) passes through
+-- the app.service_request GUC. External callers cannot set PG GUCs over HTTP —
+-- arming is server-side authority only (spec-auth-enforcement.md Q4/A4a).
 CREATE POLICY users_own_data ON users
-    FOR ALL USING (id = auth.uid());
+    FOR ALL USING (
+        id = auth.uid()
+        OR current_setting('app.service_request', true) = 'on'
+    );
 
 -- Staff can read clinic info
 CREATE POLICY clinic_staff_read ON clinics
@@ -343,17 +369,36 @@ CREATE POLICY clinic_staff_read ON clinics
         )
     );
 
--- Staff can create calls for their clinic
+-- Staff can create calls for their clinic. The voice webhook path (verified
+-- service token, no end-user JWT) passes through app.service_request.
 CREATE POLICY calls_create ON calls
-    FOR INSERT WITH CHECK (clinic_id IN (
-        SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
-    ));
+    FOR INSERT WITH CHECK (
+        clinic_id IN (
+            SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
+        )
+        OR current_setting('app.service_request', true) = 'on'
+    );
 
--- Staff can read calls for their clinic
+-- Staff can read calls for their clinic; verified webhooks pass through too.
 CREATE POLICY calls_read ON calls
-    FOR SELECT USING (clinic_id IN (
-        SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
-    ));
+    FOR SELECT USING (
+        clinic_id IN (
+            SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
+        )
+        OR current_setting('app.service_request', true) = 'on'
+    );
+
+-- Staff can update their clinic's calls (state machine + metadata setters);
+-- the transcript persistence path (verified webhook) passes through too.
+-- Discovered during enforcement: calls had INSERT/SELECT policies only, so
+-- UPDATEs (update_call_state, update_call_transcript) were RLS-deny-all.
+CREATE POLICY calls_update ON calls
+    FOR UPDATE USING (
+        clinic_id IN (
+            SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
+        )
+        OR current_setting('app.service_request', true) = 'on'
+    );
 
 -- Appointments: clinic staff can manage (CRUD)
 CREATE POLICY appointments_manage ON appointments
@@ -373,6 +418,31 @@ CREATE POLICY payments_manage ON payments
         SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
     ));
 
+-- Clinic memberships: users read their own rows; a clinic owner reads their
+-- clinic's rows; ONLY the server-side service path may INSERT them this phase
+-- (create_clinic assigns the creator's owner row; the future staff-add
+-- endpoint gets its own policy or continues on the service path).
+CREATE POLICY clinic_users_own ON clinic_users
+    FOR SELECT USING (user_id = auth.uid());
+
+CREATE POLICY clinic_users_manage ON clinic_users
+    FOR SELECT USING (clinic_id IN (
+        SELECT clinic_id FROM clinic_users
+        WHERE user_id = auth.uid() AND role = 'owner'
+    ));
+
+CREATE POLICY clinic_users_service_insert ON clinic_users
+    FOR INSERT WITH CHECK (current_setting('app.service_request', true) = 'on');
+
+-- Clinic creation is platform-owner only (require_roles('owner') at the API
+-- layer too). The owner role is seeded via the demo tenant — register() cannot
+-- grant it, so there is no self-serve path. clinic_own_data above keeps
+-- SELECT/UPDATE/DELETE scoped to one's owned clinics.
+CREATE POLICY clinics_create ON clinics
+    FOR INSERT WITH CHECK (EXISTS (
+        SELECT 1 FROM users WHERE id = auth.uid() AND role = 'owner'
+    ));
+
 -- Language codes: always readable (reference data)
 CREATE POLICY language_codes_read ON language_codes
     FOR SELECT USING (is_active = TRUE);
@@ -386,3 +456,56 @@ GRANT ALL ON appointments TO authenticated;
 GRANT ALL ON prescriptions TO authenticated;
 GRANT ALL ON payments TO authenticated;
 GRANT USAGE, SELECT ON sequence language_codes_id_seq TO authenticated;
+
+-- Grant permissions for the API runtime role (medicall_app) — identical surface
+-- so a non-owner connection can execute every Phase-1 statement (RLS then
+-- applies per-policy). language_codes stays read-only reference data.
+GRANT ALL ON clinics TO medicall_app;
+GRANT ALL ON clinic_users TO medicall_app;
+GRANT ALL ON users TO medicall_app;
+GRANT ALL ON calls TO medicall_app;
+GRANT ALL ON appointments TO medicall_app;
+GRANT ALL ON prescriptions TO medicall_app;
+GRANT ALL ON payments TO medicall_app;
+GRANT SELECT ON language_codes TO medicall_app;
+GRANT USAGE, SELECT ON sequence language_codes_id_seq TO medicall_app;
+
+-- ─── Demo tenant seed (spec-auth-enforcement.md Q3/A3a) ─────────────────────
+-- The ONLY bootstrap in the RLS world: register() creates staff users only (no
+-- memberships) and clinic INSERT is owner-gated, so without this seed no first
+-- clinic/owner could ever exist. Fixed ids keep smoke/CI deterministic;
+-- ON CONFLICT DO NOTHING makes the seed idempotent. Dev creds — prod replaces
+-- them with real provisioning. Owner login: +919876543210 / DemoPass!2026.
+INSERT INTO users (id, name, phone, email, password_hash, role, is_active)
+VALUES (
+    '11111111-1111-1111-1111-111111111111',
+    'City Care Demo Owner',
+    '+919876543210',
+    'demo@medicall.in',
+    'pbkdf2_sha256$210000$f5e1e09bd2b39174bb70e78ec72e77a8$0c8be14df7ff2bb1280624f6f4c8232b093235be251035c8c7b8e469d4521fc6',
+    'owner',
+    TRUE
+)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO clinics (id, name, phone_number, address, city, state, pincode, plan, is_active)
+VALUES (
+    '22222222-2222-2222-2222-222222222222',
+    'City Care Demo Clinic',
+    '+91 98765 43210',
+    '12 MG Road',
+    'Bengaluru',
+    'Karnataka',
+    '560001',
+    'starter',
+    TRUE
+)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO clinic_users (clinic_id, user_id, role)
+VALUES (
+    '22222222-2222-2222-2222-222222222222',
+    '11111111-1111-1111-1111-111111111111',
+    'owner'
+)
+ON CONFLICT DO NOTHING;

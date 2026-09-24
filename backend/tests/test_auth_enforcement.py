@@ -42,7 +42,7 @@ AUTH_USER_CRUD = (
     "bump_user_otp_attempts",
     "clear_user_otp",
 )
-VOICE_WEBHOOKS = ("call_completed", "livekit_agent_start", "exotel_webhook",
+VOICE_WEBHOOKS = ("call_completed", "start_livekit_agent", "exotel_webhook",
                   "knowlarity_webhook", "twilio_webhook")
 
 
@@ -78,7 +78,12 @@ def router_endpoints(tree) -> dict:
 
 
 def fn_block(text: str, name: str) -> str:
-    """The source text of one function (via AST offsets), or ''."""
+    """The source text of one function (via AST line offsets), or ''.
+
+    Slices by LINE, not by character offset: splitlines(keepends=True) keeps
+    each line intact so text[node.lineno-1:node.end_lineno] spans the def line
+    down to the function's last line.
+    """
     try:
         tree = ast.parse(text)
     except SyntaxError:
@@ -86,20 +91,30 @@ def fn_block(text: str, name: str) -> str:
     node = fns(tree).get(name)
     if node is None:
         return ""
-    return text[node.lineno - 1:node.end_lineno]
+    lines = text.splitlines(keepends=True)
+    return "".join(lines[node.lineno - 1:node.end_lineno])
 
 
 def args_reference_guard(node) -> bool:
-    """True if the function's parameter list mentions Depends or require_roles."""
+    """True if the function's parameter list mentions Depends or require_roles.
+
+    The routers use the established untyped form ``user=Depends(get_current_user)``
+    (same style as auth.py's /me), so both the annotation and the DEFAULT VALUE
+    are inspected — a bare ``user: User`` annotation would not carry the guard.
+    """
     if node is None:
         return False
-    for a in node.args.args:
-        ann = a.annotation
-        if ann is None:
-            continue
-        src = ast.unparse(ann) if hasattr(ast, "unparse") else ""
-        if "Depends(get_current_user)" in src or "Depends(require_roles" in src or "Depends(require_clinic_role" in src:
-            return True
+    args = node.args.args
+    defaults = [None] * (len(args) - len(node.args.defaults)) + list(node.args.defaults)
+    for a, d in zip(args, defaults):
+        parts = []
+        if a.annotation is not None:
+            parts.append(ast.unparse(a.annotation))
+        if d is not None:
+            parts.append(ast.unparse(d))
+        for src in parts:
+            if "Depends(get_current_user)" in src or "Depends(require_roles" in src or "Depends(require_clinic_role" in src:
+                return True
     return False
 
 
@@ -163,13 +178,13 @@ class TestSchemaEnforcement(unittest.TestCase):
         self.assertIn("WITH CHECK", block)
 
     def test_service_request_clause_on_auth_and_calls_policies(self):
-        for policy in ("users_own_data", "calls_create", "calls_read"):
+        for policy in ("users_own_data", "calls_create", "calls_read", "calls_update"):
             block = self.text.split(f"CREATE POLICY {policy}", 1)[1].split("CREATE POLICY", 1)[0]
             self.assertIn("app.service_request", block, f"{policy}: missing service bypass")
 
     def test_demo_tenant_seed_present(self):
         self.assertIn("demo@medicall.in", self.text)
-        self.assertIn("+91 98765 43210", self.text)
+        self.assertIn("+919876543210", self.text)
         self.assertIn("ON CONFLICT DO NOTHING", self.text)
 
     def test_demo_owner_seeded_with_global_owner_role(self):

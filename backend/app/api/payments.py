@@ -8,8 +8,9 @@ states so the table survives the Q5 decision.
 """
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.auth import get_current_user
 from app.db.postgres import create_payment, get_payment, list_payments, update_payment_status
 from app.schemas.payment import (
     PAYMENT_GATEWAYS,
@@ -44,7 +45,9 @@ def _uuid(value: str, what: str) -> uuid.UUID:
 
 
 @router.get("")
-async def list_payments_ep(clinic_id: str, status: str = ""):
+async def list_payments_ep(
+    clinic_id: str, status: str = "", user=Depends(get_current_user)
+):
     """List payments for a clinic, newest first, optional status filter."""
     cid = _uuid(clinic_id, "clinic_id")
     if status and status not in PAYMENT_STATUSES:
@@ -54,7 +57,7 @@ async def list_payments_ep(clinic_id: str, status: str = ""):
 
 
 @router.post("", status_code=201)
-async def create_payment_ep(data: PaymentCreate):
+async def create_payment_ep(data: PaymentCreate, user=Depends(get_current_user)):
     """Record a payment intent (scaffold — no gateway SDK call, G6-Q5)."""
     cid = _uuid(data.clinic_id, "clinic_id")
     if data.gateway not in PAYMENT_GATEWAYS:
@@ -76,7 +79,7 @@ async def create_payment_ep(data: PaymentCreate):
 
 
 @router.get("/{payment_id}")
-async def get_payment_ep(payment_id: str):
+async def get_payment_ep(payment_id: str, user=Depends(get_current_user)):
     """Payment detail."""
     pid = _uuid(payment_id, "payment_id")
     row = await get_payment(pid)
@@ -86,7 +89,9 @@ async def get_payment_ep(payment_id: str):
 
 
 @router.patch("/{payment_id}/status")
-async def update_payment_status_ep(payment_id: str, data: PaymentStatusUpdate):
+async def update_payment_status_ep(
+    payment_id: str, data: PaymentStatusUpdate, user=Depends(get_current_user)
+):
     """Update payment status (pending/captured/failed/refunded)."""
     if data.status not in PAYMENT_STATUSES:
         raise HTTPException(status_code=422, detail=f"invalid status: {data.status}")

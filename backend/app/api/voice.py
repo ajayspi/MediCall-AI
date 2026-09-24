@@ -4,10 +4,17 @@ G4: multi-provider telephony for the Indian Medical Call Center. Webhook
 parsing lives in app.services.telephony (stdlib, unit-tested); this module
 wires it to FastAPI routes and the LiveKit dispatch stub (live dispatch runs
 in Docker/CI, same pattern as main.py lifespan init_db).
+
+Enforcement (spec-auth-enforcement.md Q2/A2a): every webhook path requires a
+shared service token (X-Service-Token == WEBHOOK_SERVICE_TOKEN env, dev
+default). Verified requests arm the server-side service_request GUC so the RLS
+policies on calls (create/read/update) admit the write — external callers
+cannot set Postgres GUCs over HTTP, and without the token the endpoints 401.
 """
+import hmac
 import os
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 
 from app.services.telephony import (
@@ -25,6 +32,23 @@ router = APIRouter()
 
 DEFAULT_LANGUAGE = os.getenv("DEFAULT_CALLER_LANGUAGE", "hi")
 DEFAULT_CLINIC_ID = os.getenv("DEFAULT_CLINIC_ID", "")
+
+
+def _verify_service_token(request: Request) -> None:
+    """Reject provider callbacks that don't carry the shared service token.
+
+    The webhook endpoints keep working under FORCE RLS because the verified
+    paths arm app.service_request (server-side) for the calls policies. The
+    token is compared constant-time; the env default matches the compose /
+    .env.example dev value and must be overridden in prod.
+    """
+    expected = os.getenv("WEBHOOK_SERVICE_TOKEN", "dev-service-token")
+    got = request.headers.get("X-Service-Token", "")
+    if not hmac.compare_digest(got, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid or missing service token",
+        )
 
 
 class LiveKitStart(BaseModel):
@@ -67,6 +91,7 @@ def handle_event(event) -> dict:
 @router.post("/webhook/exotel")
 async def exotel_webhook(request: Request):
     """Exotel StatusCallback webhook (JSON body)."""
+    _verify_service_token(request)
     body = await request.json()
     if not isinstance(body, dict):
         body = {}
@@ -76,6 +101,7 @@ async def exotel_webhook(request: Request):
 @router.post("/webhook/knowlarity")
 async def knowlarity_webhook(request: Request):
     """Knowlarity SR / hook-api webhook (form fields)."""
+    _verify_service_token(request)
     form = dict(await request.form())
     return handle_event(parse_knowlarity(form))
 
@@ -83,35 +109,44 @@ async def knowlarity_webhook(request: Request):
 @router.post("/webhook/twilio")
 async def twilio_webhook(request: Request):
     """Twilio-India voice callback (form fields)."""
+    _verify_service_token(request)
     form = dict(await request.form())
     return handle_event(parse_twilio(form))
 
 
 @router.post("/livekit-agent-start")
-async def start_livekit_agent(data: LiveKitStart):
+async def start_livekit_agent(request: Request, data: LiveKitStart):
     """Dispatch the medical agent into a LiveKit room for an inbound call."""
+    _verify_service_token(request)
     room = room_name_for(data)
     return {"status": "agent_started", "room": room, "language": data.language}
 
 
 @router.post("/call-completed")
-async def call_completed(data: CallCompleted):
+async def call_completed(request: Request, data: CallCompleted):
     """Agent → API transcript persistence (D1). Saves calls.transcript.
 
     The postgres write (update_call_transcript) is imported lazily so the API
     layer stays import-light on dev machines without sqlalchemy (Docker/CI has
-    it). Idempotent: keyed by call_id.
+    it). Idempotent: keyed by call_id. Verified service token first; the write
+    then runs under the service_request GUC so the calls_update RLS policy
+    admits it.
     """
+    _verify_service_token(request)
     saved = False
     try:
         from datetime import datetime as _dt
 
+        # Two from-imports on purpose: test_docker_ci asserts the exact lazy
+        # line "from app.db.postgres import update_call_transcript".
+        from app.db.postgres import service_request_ctx
         from app.db.postgres import update_call_transcript
 
         ended_at = _dt.fromisoformat(data.ended_at) if data.ended_at else None
-        saved = await update_call_transcript(
-            data.call_id, data.transcript, ended_at, data.duration_seconds
-        )
+        with service_request_ctx():
+            saved = await update_call_transcript(
+                data.call_id, data.transcript, ended_at, data.duration_seconds
+            )
     except (ImportError, ValueError):
         # sqlalchemy/postgres absent in source-level dev env, or malformed
         # ended_at — accept the payload and continue (Docker/CI persists).

@@ -7,8 +7,9 @@ pagination; state transitions are validated against the G3 state machine
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.api.auth import get_current_user
 from app.db.postgres import get_call, list_calls, update_call_state
 from app.models.call import STATE_TRANSITIONS, CallState, TriageSeverity
 from app.schemas.call import CallStateUpdate
@@ -70,6 +71,7 @@ async def list_calls_ep(
     to: str = Query("", alias="to"),
     limit: int = DEFAULT_LIMIT,
     offset: int = 0,
+    user=Depends(get_current_user),
 ):
     """List calls for a clinic, newest first, with optional filters."""
     cid = _uuid(clinic_id, "clinic_id")
@@ -94,7 +96,7 @@ async def list_calls_ep(
 
 
 @router.get("/{call_id}")
-async def get_call_ep(call_id: str):
+async def get_call_ep(call_id: str, user=Depends(get_current_user)):
     """Call detail (record view, transcript, severity)."""
     cid = _uuid(call_id, "call_id")
     row = await get_call(cid)
@@ -104,7 +106,9 @@ async def get_call_ep(call_id: str):
 
 
 @router.patch("/{call_id}/state")
-async def update_call_state_ep(call_id: str, data: CallStateUpdate):
+async def update_call_state_ep(
+    call_id: str, data: CallStateUpdate, user=Depends(get_current_user)
+):
     """Transition a call's state — validated against the G3 state machine."""
     cid = _uuid(call_id, "call_id")
     try:
@@ -132,7 +136,7 @@ async def update_call_state_ep(call_id: str, data: CallStateUpdate):
 
 
 @router.get("/{call_id}/transcript")
-async def get_call_transcript_ep(call_id: str):
+async def get_call_transcript_ep(call_id: str, user=Depends(get_current_user)):
     """Transcript for a call (multi-language turns JSONB)."""
     cid = _uuid(call_id, "call_id")
     row = await get_call(cid)

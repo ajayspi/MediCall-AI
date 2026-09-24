@@ -6,8 +6,9 @@ ClinicUpdate + exclude_unset).
 """
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.auth import get_current_user, require_roles
 from app.db.postgres import create_clinic, get_clinic, list_clinics, update_clinic
 from app.schemas.clinic import ClinicCreate, ClinicUpdate
 
@@ -56,15 +57,18 @@ def _uuid(value: str, what: str) -> uuid.UUID:
 
 
 @router.get("")
-async def list_clinics_ep(is_active: bool = True):
-    """List clinics, active by default (admin clinics page)."""
+async def list_clinics_ep(is_active: bool = True, user=Depends(get_current_user)):
+    """List clinics, active by default (admin clinics page).
+
+    RLS scopes the rows to the caller's clinic memberships.
+    """
     rows = await list_clinics(active_only=is_active)
     return [clinic_row(r) for r in rows]
 
 
 @router.post("", status_code=201)
-async def create_clinic_ep(data: ClinicCreate):
-    """Create a clinic (admin)."""
+async def create_clinic_ep(data: ClinicCreate, user=Depends(require_roles("owner"))):
+    """Create a clinic (platform owner only) — the creator becomes its owner."""
     row = await create_clinic(
         name=data.name,
         phone_number=data.phone_number,
@@ -76,12 +80,13 @@ async def create_clinic_ep(data: ClinicCreate):
         ai_instructions=data.ai_instructions,
         plan=data.plan,
         is_active=data.is_active,
+        owner_user_id=user.id,
     )
     return clinic_row(row)
 
 
 @router.get("/{clinic_id}")
-async def get_clinic_ep(clinic_id: str):
+async def get_clinic_ep(clinic_id: str, user=Depends(get_current_user)):
     """Clinic detail + settings (clinic Settings page)."""
     cid = _uuid(clinic_id, "clinic_id")
     row = await get_clinic(cid)
@@ -91,7 +96,9 @@ async def get_clinic_ep(clinic_id: str):
 
 
 @router.patch("/{clinic_id}")
-async def update_clinic_ep(clinic_id: str, data: ClinicUpdate):
+async def update_clinic_ep(
+    clinic_id: str, data: ClinicUpdate, user=Depends(get_current_user)
+):
     """Partial settings update — only the fields the client sent."""
     cid = _uuid(clinic_id, "clinic_id")
     updates = data.model_dump(exclude_unset=True)
