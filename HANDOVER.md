@@ -38,11 +38,18 @@ is the launchpad.
   still open — records intent, never calls a gateway SDK). Branch
   `ga-api-routes` off `gd-dashboards` tip. Live wiring of the 16 pages moves to
   Docker/CI (D1). Proof: `backend/tests/test_api_routes.py` 36/36 GREEN.
-- ▶️ **NEXT: UML diagrams** (ER / state machine / API contracts / data flow /
-  deployment) → **then Docker/CI integration stage** (frontend wiring to the
-  API routes, `next build`, live Deepgram/ElevenLabs/OpenAI, LiveKit room
-  lifecycle, `/call-completed` → `update_call_transcript` DB path, ruff
-  actually run).
+- ✅ **UML DIAGRAMS DONE** — `docs/uml/` 00-index + 01-er (9 tables, 13 FK
+  edges) + 02-state-machine (mermaid edges test-asserted EQUAL to
+  `STATE_TRANSITIONS`, cannot drift) + 03-api-contracts (6 prefixes, 21
+  endpoints, 409/422/404) + 04-data-flow + 05-deployment + 06-call-lifecycle.
+  Docs-only phase (zero code changes). Branch `g-uml` off `ga-api-routes`
+  tip. Proof: `backend/tests/test_uml_diagrams.py` 21/21 GREEN; regression
+  162/162.
+- ▶️ **NEXT: Docker/CI integration stage** — wire the 16 mock pages to the API
+  endpoints (03-api-contracts is the contract), `next build`, live
+  Deepgram/ElevenLabs/OpenAI round-trips, LiveKit room lifecycle,
+  `/call-completed` → `update_call_transcript` DB path, ruff actually run,
+  HTTP smoke-test of the endpoint set.
 - ⏳ **After**: Interactly-parity build (benchmarks + integration catalog are
   specced in `spec-multifit-healthcare.md`, NOT built).
 
@@ -68,11 +75,13 @@ Must print STARTUP GREEN (runs both suites + py_compile). Full runs:
 `python3 tests/test_g1_g2.py` and `python3 tests/test_g3_state_machine.py`
 from `backend\`. This PC has NO third-party packages (no fastapi/sqlalchemy/
 pytest/ruff) — tests are stdlib-only by design; live DB/runtime checks belong
-in Docker/CI. There is no `.git` in MediCall-AI yet; the startup script can
-init it (`-Branch <name>` creates an isolated `.worktrees\<name>` tree).
+in Docker/CI. Git common dir = `MediCall-AI\.git` (the main tree IS the repo's
+master working tree — keep it clean; each phase gets its own
+`.worktrees\<name>` branch via `start-worktree.ps1 -Branch <name>`).
 
 ## 6. Spec index (`.opencode/`)
 - `spec-idea-refinement-gaps.md` — master tracker: gaps, sign-off, G-records ← START HERE
+- `spec-uml-diagrams.md` — UML phase spec (Mermaid, docs/uml/, 5+1 diagrams)
 - `spec-micc-india.md` — India-market requirements (approved)
 - `spec-multifit-healthcare.md` — platform vision + Interactly research
 - `spec-micc-database-dashboards-routes-uml.md` — DB/dashboards/routes/UML plan
@@ -81,7 +90,7 @@ init it (`-Branch <name>` creates an isolated `.worktrees\<name>` tree).
 ## 7. Session rules (non-negotiable)
 1. Spec-first: clarify → research on-disk (don't assume) → update spec →
    STOP for sign-off → implement only on approval.
-2. One task per session (next = G4 only).
+2. One task per session (next = Docker/CI integration stage).
 3. Tests first (RED), implement to GREEN, refactor, lint-equivalent
    (`py_compile`; ruff lands with G5).
 4. PowerShell only: no `&&`, no `tail/head/grep`, quote spaced paths.

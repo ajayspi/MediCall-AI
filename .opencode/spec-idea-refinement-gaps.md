@@ -301,3 +301,49 @@ Not specified anywhere yet, each needs a decision before build:
   deployment) → Docker/CI integration stage (frontend wiring to these
   endpoints, `next build`, live provider round-trips, `/call-completed` +
   `update_call_transcript` DB path, ruff actually run).
+
+## Implementation Record — UML DIAGRAMS DONE (2026-09-25)
+- **Spec**: `.opencode/spec-uml-diagrams.md` — APPROVED via question tool; locked
+  decisions: **D1** = Mermaid-in-Markdown (committed as source, rendered by
+  GitHub/VS Code/typora, zero toolchain), **D2** = `docs/uml/` one file per
+  diagram + index, **D3** = the five G7 diagrams PLUS a 6th inbound-call
+  lifecycle sequence diagram. Branch `g-uml` off `ga-api-routes` tip
+  `e19564b`: spec `ae0e641` → RED test `debe9a7` → feat `26f5abe`.
+- **RED verified**: `tests/test_uml_diagrams.py` 21 tests, **20 failures**
+  against a repo with no `docs/` (every assertion mapped to a missing diagram).
+- **GREEN verified**: 21/21; full regression G1+G2 11/11, G3 9/9, G4 33/33,
+  G5 18/18, dashboards 34/34, api_routes 36/36 (**162 total**); `py_compile`
+  exit 0; tree clean.
+- **GREEN needed 3 fixes**: (1) ast state-machine parser initially required the
+  dict key's `.value` to be an `Attribute`, but `CallState.GREETING` keys have a
+  `Name("CallState")` value — the load-bearing cross-check caught it parsing 0
+  edges (fix: require `Name` + `id == "CallState"`); (2) two regexes lacked
+  `re.MULTILINE` (`assertRegex` compiles without flags; `MERMAID_EDGE_RE`
+  matched 0 lines) — use `re.search(..., re.M)` explicitly; (3) leftover token
+  `"chain"` was too broad — false-positive on "toolchain"/"fallback chain"
+  (dropped; the original restaurant-token list from test_api_routes kept
+  intact).
+- **Delivered** (docs-only phase — zero .py/.tsx/SQL changes): `docs/uml/` —
+  `00-index` (links + single sources) · `01-er` (9 tables, 13 FK edges from
+  `postgres_schema.sql`, includes API-phase `payments`, RLS note) ·
+  `02-state-machine` (edge set is test-asserted EQUAL to `STATE_TRANSITIONS`
+  from `models/call.py`, so the diagram cannot drift) · `03-api-contracts`
+  (6 prefixes — voice included at `/api/voice` in main.py — 21 endpoint paths,
+  409/422/404 annotations) · `04-data-flow` (Exotel/Knowlarity/Twilio-India
+  webhooks → handle_event → LiveKit agent → Deepgram nova-3 + ElevenLabs
+  hi/en/ta/te/bn → `/call-completed`; `update_call_transcript` DB write marked
+  Docker/CI-owned) · `05-deployment` (compose stack 3000/8001/5432/6379,
+  pgvector:pg16, redis:7-alpine, external SaaS) · `06-call-lifecycle`
+  (sequenceDiagram incl. the PAYMENT_SENT → PAYMENT_EXPIRED loop; G6-Q5 still
+  gated — intents only).
+- **Gotcha (one-line rule)**: Python `re` without `re.MULTILINE` treats `^`/`$`
+  as string boundaries — any per-line regex assertion (`assertRegex` included)
+  must pass `re.M` explicitly or it silently matches nothing.
+- **Gotcha (one-line rule)**: `ast` enum-attr keys like `CallState.GREETING`
+  are `Attribute(value=Name("CallState"))` — assert `.value` is a `Name` (with
+  the right `.id`), not an `Attribute`.
+- **Next**: Docker/CI integration stage — wire the 16 mock pages to the API
+  endpoints (03-api-contracts is the contract), `next build`, live
+  Deepgram/ElevenLabs/OpenAI round-trips, LiveKit room lifecycle,
+  `/call-completed` → `update_call_transcript` DB path, ruff actually run,
+  HTTP smoke-test of the endpoint set.
