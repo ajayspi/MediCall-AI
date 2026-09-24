@@ -1,7 +1,11 @@
 # SPEC: MediCall AI — Docker/CI Integration Stage (g-ci)
 
 - Branch: `g-ci` (off `g-uml` tip `d822f27`) · Worktree: `.worktrees\g-ci`
-- Status: **DRAFT — pending sign-off. No files written yet.**
+- Status: **APPROVED 2026-09-25 + DONE** — Q1 local-toolchain verify + author CI
+  (no Docker on this PC; node/npm are real and the frontend verified locally) ·
+  Q2 client module + 2 proof pages (live-calls, dashboard) · Q3 3-job ci.yml +
+  smoke_api.py + toolchain fixes. See tracker DONE record + commits `3f1d662`
+  (RED, 15 failures) → `c979275` (feat) → docs commit.
 
 ## Goal
 Make the stack coincide with runtime reality: fix the integration defects that

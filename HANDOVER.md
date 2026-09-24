@@ -45,11 +45,26 @@ is the launchpad.
   Docs-only phase (zero code changes). Branch `g-uml` off `ga-api-routes`
   tip. Proof: `backend/tests/test_uml_diagrams.py` 21/21 GREEN; regression
   162/162.
-- ▶️ **NEXT: Docker/CI integration stage** — wire the 16 mock pages to the API
-  endpoints (03-api-contracts is the contract), `next build`, live
-  Deepgram/ElevenLabs/OpenAI round-trips, LiveKit room lifecycle,
-  `/call-completed` → `update_call_transcript` DB path, ruff actually run,
-  HTTP smoke-test of the endpoint set.
+- ✅ **DOCKER/CI INTEGRATION DONE** — first phase with REAL frontend
+  verification: `npm install` (lockfile committed) + `npm run lint` (0 errors)
+  + `next build` **exit 0** (19 routes). Fixed 6 build/CI-breaking defects
+  (lockfile, public/, `next lint`→eslint flat, healthcheck `requests`→httpx,
+  `/call-completed` transcript wiring, react-19 peer conflicts) + the
+  **route-group collision** caught by the first real build: `(admin)` group had
+  no URL segment (resolved bare `/patients`… colliding with `(clinic)` and the
+  `/` landing) → real `admin/` segment. Delivered: `src/lib/api.ts` typed
+  client + react-query hooks with `NEXT_PUBLIC_USE_MOCK` fallback (proof pages
+  live-calls + dashboard wire in; 14 stay on mock), `backend/scripts/
+  smoke_api.py` stdlib HTTP smoke of the 03-api-contracts surface,
+  `.github/workflows/ci.yml` 3 jobs (backend stdlib+ruff, frontend
+  ci+lint+build, stack compose up + smoke + teardown). Branch `g-ci` off
+  `g-uml` tip. Proof: `tests/test_docker_ci.py` 18/18 GREEN; regression
+  **180/180**; eslint 0; next build exit 0.
+- ▶️ **NEXT: Auth (G6-Q1, locked)** — OTP + password + Google/Microsoft SSO +
+  ABHA, role matrix (owner/staff/triage_agent/doctor/readonly). Then: payments
+  real gateway wiring once G6-Q5 is answered; live Deepgram/ElevenLabs/OpenAI +
+  LiveKit room round-trips behind CI secrets (ci.yml stack job proves the
+  composable contract on a Docker runner); then merge branch tips to main.
 - ⏳ **After**: Interactly-parity build (benchmarks + integration catalog are
   specced in `spec-multifit-healthcare.md`, NOT built).
 
@@ -75,12 +90,15 @@ Must print STARTUP GREEN (runs both suites + py_compile). Full runs:
 `python3 tests/test_g1_g2.py` and `python3 tests/test_g3_state_machine.py`
 from `backend\`. This PC has NO third-party packages (no fastapi/sqlalchemy/
 pytest/ruff) — tests are stdlib-only by design; live DB/runtime checks belong
-in Docker/CI. Git common dir = `MediCall-AI\.git` (the main tree IS the repo's
-master working tree — keep it clean; each phase gets its own
-`.worktrees\<name>` branch via `start-worktree.ps1 -Branch <name>`).
+in Docker/CI. **Frontend IS real-verifiable here**: `npm ci && npm run lint &&
+npm run build` in `frontend\` (node v24 + npm 11; first done in g-ci — exit 0).
+Git common dir = `MediCall-AI\.git` (the main tree IS the repo's master working
+tree — keep it clean; each phase gets its own `.worktrees\<name>` branch via
+`start-worktree.ps1 -Branch <name>`).
 
 ## 6. Spec index (`.opencode/`)
 - `spec-idea-refinement-gaps.md` — master tracker: gaps, sign-off, G-records ← START HERE
+- `spec-docker-ci.md` — Docker/CI phase spec (Q1 local+CI, Q2 client+2 pages, Q3 3-job workflow; DONE)
 - `spec-uml-diagrams.md` — UML phase spec (Mermaid, docs/uml/, 5+1 diagrams)
 - `spec-micc-india.md` — India-market requirements (approved)
 - `spec-multifit-healthcare.md` — platform vision + Interactly research
@@ -90,8 +108,9 @@ master working tree — keep it clean; each phase gets its own
 ## 7. Session rules (non-negotiable)
 1. Spec-first: clarify → research on-disk (don't assume) → update spec →
    STOP for sign-off → implement only on approval.
-2. One task per session (next = Docker/CI integration stage).
+2. One task per session (next = Auth, G6-Q1).
 3. Tests first (RED), implement to GREEN, refactor, lint-equivalent
-   (`py_compile`; ruff lands with G5).
+   (`py_compile`/`compileall`; ruff runs in CI; eslint + next build are real
+   locally since g-ci).
 4. PowerShell only: no `&&`, no `tail/head/grep`, quote spaced paths.
 5. Never write code into `C:\Users\vigilare\Talkbyte\` or `Talkbyte_clone\`.
