@@ -16,6 +16,18 @@ services:
       - DEBUG=true
       - LOG_LEVEL=debug
       - ENVIRONMENT=development
+      # Payments (G6-Q5, spec-payments.md): keys gate live gateway dispatch
+      # (501 without); webhook secrets verify per-gateway signatures.
+      - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID:-}
+      - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET:-}
+      - RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET:-}
+      - PHONEPE_MERCHANT_ID=${PHONEPE_MERCHANT_ID:-}
+      - PHONEPE_SALT_KEY=${PHONEPE_SALT_KEY:-}
+      - PHONEPE_SALT_INDEX=${PHONEPE_SALT_INDEX:-1}
+      - CASHFREE_APP_ID=${CASHFREE_APP_ID:-}
+      - CASHFREE_SECRET_KEY=${CASHFREE_SECRET_KEY:-}
+      - CASHFREE_WEBHOOK_SECRET=${CASHFREE_WEBHOOK_SECRET:-}
+      - PAYMENT_LINK_BASE_URL=${PAYMENT_LINK_BASE_URL:-http://localhost:8001}
     depends_on:
       postgres:
         condition: service_healthy

@@ -44,6 +44,10 @@ AUTH_USER_CRUD = (
 )
 VOICE_WEBHOOKS = ("call_completed", "start_livekit_agent", "exotel_webhook",
                   "knowlarity_webhook", "twilio_webhook")
+# Gateway webhooks are identity-free BY DESIGN (verified by the shared
+# X-Service-Token + per-gateway HMAC — spec-payments.md Q4/A4a), mirroring the
+# voice webhooks above. The payments suite asserts their signed-service wiring.
+IDENTITY_FREE_ENDPOINTS = (("payments", "payments_webhook"),)
 
 
 def read(path: Path) -> str:
@@ -128,6 +132,9 @@ class TestRouterGuards(unittest.TestCase):
             eps = router_endpoints(tree)
             self.assertGreater(len(eps), 0, f"{mod}: no endpoints found")
             for name in eps:
+                if (mod, name) in IDENTITY_FREE_ENDPOINTS:
+                    # gateway webhook: auth = service token + per-gateway HMAC
+                    continue
                 self.assertTrue(
                     args_reference_guard(fns(tree).get(name)),
                     f"{mod}.{name}: missing Depends(get_current_user)/role guard",

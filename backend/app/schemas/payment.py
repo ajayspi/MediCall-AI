@@ -1,10 +1,11 @@
-"""Payment request models + gateway/status single source (scaffold, G6-Q5).
+"""Payment request models + gateway/status single source (G6-Q5 answered).
 
-G6-Q5 (which flows pay / which gateway per flow) is still open: the router
-records intent only and never calls a gateway SDK. The gateway set matches
-the G5 requirements pins (razorpay / phonepe-pg-sdk / cashfree-pg) + manual;
-statuses match Razorpay/PhonePe/Cashfree webhook states so the table survives
-the Q5 decision.
+spec-payments.md (approved 2026-09-25): consultations + prescription refills
+bill; kind -> gateway map lives in app.services.payments (razorpay=links,
+phonepe=UPI fallback, cashfree=subscriptions); webhooks verify per-gateway HMAC
++ the shared service token; live SDK calls stay env-gated (501 without keys).
+The router records intent and dispatches the gateway request only when the
+gateway's env keys are present — it never imports an SDK.
 """
 from pydantic import BaseModel
 
@@ -20,6 +21,7 @@ class PaymentCreate(BaseModel):
     currency: str = "INR"
     gateway: str = "manual"
     gateway_ref: str = ""
+    kind: str = "consultation"  # consultation / refill / subscription
 
 
 class PaymentStatusUpdate(BaseModel):

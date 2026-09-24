@@ -1,22 +1,46 @@
-"""Payments API — scaffold only (API routes phase).
+"""Payments API — intent + webhook, gateway SDKs env-gated (G6-Q5 wired).
 
-G6-Q5 (which flows pay / which gateway per flow) is still OPEN: this router
-records payment intent only — it NEVER calls a gateway SDK. Gateways are
-razorpay / phonepe / cashfree / manual (PAYMENT_GATEWAYS in app.schemas.payment);
-statuses (pending / captured / failed / refunded) match the gateways' webhook
-states so the table survives the Q5 decision.
+spec-payments.md (approved 2026-09-25): consultations + prescription refills
+bill; the kind->gateway fallback map (razorpay links / phonepe UPI / cashfree
+subscriptions) lives in app.services.payments; POST /api/payments/webhook is
+verified by the shared X-Service-Token AND the per-gateway signature (Q4/A4a)
+and is identity-free by design — gateway callbacks carry no user token. Live
+gateway SDK requests fire only when the gateway's env keys are present (501
+otherwise; manual stays keyless). This router NEVER imports a gateway SDK.
 """
+import json
+import os
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.auth import get_current_user
-from app.db.postgres import create_payment, get_payment, list_payments, update_payment_status
+from app.db.postgres import (
+    create_payment,
+    find_payment_by_gateway_ref,
+    get_call,
+    get_payment,
+    list_payments,
+    service_request_ctx,
+    update_call_state,
+    update_payment_status,
+)
 from app.schemas.payment import (
     PAYMENT_GATEWAYS,
     PAYMENT_STATUSES,
     PaymentCreate,
     PaymentStatusUpdate,
+)
+from app.services.payments import (
+    KIND_TO_GATEWAYS,
+    PAYMENT_KINDS,
+    detect_gateway,
+    dispatch_gateway_request,
+    extract_gateway_ref,
+    gateway_env_ready,
+    next_status,
+    verify_webhook_request,
+    webhook_status_for,
 )
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
@@ -34,6 +58,10 @@ def payment_row(p) -> dict:
         "gateway": p.gateway,
         "gateway_ref": p.gateway_ref,
         "status": p.status,
+        "kind": getattr(p, "kind", None),
+        "expires_at": (
+            p.expires_at.isoformat() if getattr(p, "expires_at", None) else None
+        ),
     }
 
 
@@ -42,6 +70,20 @@ def _uuid(value: str, what: str) -> uuid.UUID:
         return uuid.UUID(value)
     except (ValueError, TypeError, AttributeError):
         raise HTTPException(status_code=422, detail=f"invalid {what}")
+
+
+def _gateway_webhook_secrets(gateway: str):
+    """Env secrets for a gateway's webhook verifier, or None if unconfigured."""
+    if gateway == "razorpay":
+        secret = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "")
+        return {"secret": secret} if secret else None
+    if gateway == "phonepe":
+        salt = os.environ.get("PHONEPE_SALT_KEY", "")
+        return {"salt_key": salt} if salt else None
+    if gateway == "cashfree":
+        secret = os.environ.get("CASHFREE_WEBHOOK_SECRET", "")
+        return {"secret": secret} if secret else None
+    return None
 
 
 @router.get("")
@@ -58,10 +100,25 @@ async def list_payments_ep(
 
 @router.post("", status_code=201)
 async def create_payment_ep(data: PaymentCreate, user=Depends(get_current_user)):
-    """Record a payment intent (scaffold — no gateway SDK call, G6-Q5)."""
+    """Create a payment intent — env-gated gateway dispatch (Q5/A5a).
+
+    `manual` (offline/dev invoices) is always allowed keyless. razorpay /
+    phonepe / cashfree answer 501 when their env keys are absent (mirrors the
+    SSO/telephony pattern) so the contract surface is live and the SDK request
+    only fires on a configured host; kind must map to the gateway per A2a.
+    """
     cid = _uuid(data.clinic_id, "clinic_id")
     if data.gateway not in PAYMENT_GATEWAYS:
         raise HTTPException(status_code=422, detail=f"invalid gateway: {data.gateway}")
+    if data.kind not in PAYMENT_KINDS:
+        raise HTTPException(status_code=422, detail=f"invalid kind: {data.kind}")
+    if data.gateway != "manual" and data.gateway not in KIND_TO_GATEWAYS.get(data.kind, ()):
+        raise HTTPException(
+            status_code=422,
+            detail=f"gateway {data.gateway} not valid for kind {data.kind}",
+        )
+    if data.gateway != "manual" and not gateway_env_ready(data.gateway):
+        raise HTTPException(status_code=501, detail=f"gateway {data.gateway} not configured")
     call_id = _uuid(data.call_id, "call_id") if data.call_id else None
     appointment_id = (
         _uuid(data.appointment_id, "appointment_id") if data.appointment_id else None
@@ -74,7 +131,14 @@ async def create_payment_ep(data: PaymentCreate, user=Depends(get_current_user))
         currency=data.currency or "INR",
         gateway=data.gateway,
         gateway_ref=data.gateway_ref or None,
+        kind=data.kind,
     )
+    if data.gateway != "manual":
+        result = dispatch_gateway_request(data.gateway, data.kind, row)
+        if result is None:
+            raise HTTPException(
+                status_code=502, detail=f"gateway {data.gateway} request failed"
+            )
     return payment_row(row)
 
 
@@ -100,3 +164,54 @@ async def update_payment_status_ep(
     if not ok:
         raise HTTPException(status_code=404, detail="payment not found")
     return {"payment_id": str(pid), "status": data.status, "updated": ok}
+
+
+@router.post("/webhook")
+async def payments_webhook(request: Request):
+    """Gateway -> server webhook (identity-free by design, Q4/A4a).
+
+    Verified by the shared X-Service-Token (WEBHOOK_SERVICE_TOKEN) AND the
+    per-gateway signature (X-Razorpay-Signature / X-VERIFY /
+    X-Verify-Hmac-Sha256). Writes run under service_request_ctx() because
+    auth.uid() is NULL here — payments_manage carries the app.service_request
+    bypass clause. Idempotent by gateway_ref (uq_payments_gateway_ref): a
+    replayed webhook updates the same row. On captured, the linked call in
+    PAYMENT_SENT advances to COMPLETE (the Q3/A3a loop).
+    """
+    token = request.headers.get("X-Service-Token", "")
+    if token != os.environ.get("WEBHOOK_SERVICE_TOKEN", "dev-service-token"):
+        raise HTTPException(status_code=401, detail="invalid service token")
+    raw = await request.body()
+    try:
+        payload = json.loads(raw.decode()) if raw else {}
+    except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=422, detail="invalid JSON body")
+    gateway = str(payload.get("gateway", "") or detect_gateway(payload)).lower()
+    if gateway not in PAYMENT_GATEWAYS or gateway == "manual":
+        raise HTTPException(status_code=422, detail=f"invalid gateway: {gateway}")
+    secrets = _gateway_webhook_secrets(gateway)
+    if secrets is None:
+        raise HTTPException(status_code=503, detail=f"gateway {gateway} not configured")
+    if not verify_webhook_request(gateway, raw, request.headers, secrets):
+        raise HTTPException(status_code=401, detail=f"invalid {gateway} signature")
+    ref = extract_gateway_ref(gateway, payload)
+    incoming = webhook_status_for(gateway, payload)
+    if not ref:
+        raise HTTPException(status_code=422, detail="no gateway_ref in payload")
+    async with service_request_ctx():
+        row = await find_payment_by_gateway_ref(gateway, ref)
+        if row is None:
+            raise HTTPException(status_code=404, detail="payment intent not found")
+        nxt = next_status(row.status, incoming)
+        if nxt != row.status:
+            await update_payment_status(row.id, nxt)
+        if nxt == "captured" and row.call_id:
+            call = await get_call(row.call_id)
+            if call is not None and call.state == "PAYMENT_SENT":
+                await update_call_state(row.call_id, "COMPLETE")
+    return {
+        "status": "ok",
+        "gateway": gateway,
+        "gateway_ref": ref,
+        "payment_status": nxt,
+    }

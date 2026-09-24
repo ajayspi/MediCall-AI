@@ -15,7 +15,7 @@ import uuid
 from collections.abc import AsyncGenerator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from app.models.call import CallState, TriageSeverity
@@ -507,6 +507,12 @@ class Payment(Base):
     gateway_ref: Mapped[Optional[str]] = mapped_column(String(255))
     # pending, captured, failed, refunded
     status: Mapped[str] = mapped_column(String(20), default="pending")
+    # consultation / refill / subscription (spec-payments.md Q1/A1a, Q2/A2a)
+    kind: Mapped[str] = mapped_column(String(20), default="consultation")
+    # Intent TTL — the PAYMENT_SENT -> PAYMENT_EXPIRED leg. The column is
+    # recorded at creation; an automated expiry sweep is a follow-up (needs
+    # the scheduler — Docker/CI territory).
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_tz
     )
@@ -881,8 +887,17 @@ async def create_payment(
     call_id: Optional[uuid.UUID] = None,
     appointment_id: Optional[uuid.UUID] = None,
     status: str = "pending",
+    kind: str = "consultation",
+    expires_at: Optional[datetime] = None,
 ) -> Payment:
-    """Create a payment intent record (scaffold — no gateway SDK call, G6-Q5)."""
+    """Create a payment intent (spec-payments.md, G6-Q5).
+
+    Records the intent (consultation/refill/subscription) with an expiry TTL
+    for the PAYMENT_EXPIRED leg. The gateway SDK request itself is dispatched
+    by the router under service_request_ctx() — this fn only persists.
+    """
+    if expires_at is None:
+        expires_at = now_tz() + timedelta(hours=24)
     async with SessionFactory() as session:
         stmt = (
             insert(Payment)
@@ -895,12 +910,30 @@ async def create_payment(
                 gateway=gateway,
                 gateway_ref=gateway_ref,
                 status=status,
+                kind=kind,
+                expires_at=expires_at,
             )
             .returning(Payment)
         )
         result = await session.execute(stmt)
         await session.commit()
         return result.scalar_one()
+
+
+async def find_payment_by_gateway_ref(
+    gateway: str, gateway_ref: str
+) -> Optional[Payment]:
+    """Find a payment intent by (gateway, gateway_ref) — webhook idempotency.
+
+    gateway_ref is UNIQUE (partial index uq_payments_gateway_ref) so a
+    replayed webhook lands on the same row.
+    """
+    async with SessionFactory() as session:
+        stmt = select(Payment).where(
+            Payment.gateway == gateway, Payment.gateway_ref == gateway_ref
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
 
 
 async def list_payments(

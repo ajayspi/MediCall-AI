@@ -324,11 +324,13 @@ class TestPaymentEnv(unittest.TestCase):
     GATEWAY_KEYS = (
         "RAZORPAY_KEY_ID",
         "RAZORPAY_KEY_SECRET",
+        "RAZORPAY_WEBHOOK_SECRET",
         "PHONEPE_MERCHANT_ID",
-        "PHONEPE_KEY",
-        "PHONEPE_IV",
+        "PHONEPE_SALT_KEY",
+        "PHONEPE_SALT_INDEX",
         "CASHFREE_APP_ID",
-        "CASHFREE_SECRET",
+        "CASHFREE_SECRET_KEY",
+        "CASHFREE_WEBHOOK_SECRET",
         "PAYMENT_LINK_BASE_URL",
     )
 

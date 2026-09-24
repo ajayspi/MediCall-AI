@@ -24,6 +24,8 @@ runner, or the compose host. It drives the executable endpoint contract:
     POST /api/prescriptions                         -> 201 create (returns id)
     PATCH /api/prescriptions/{prescription_id}/status -> 422 invalid status; 200 valid status
     POST /api/payments                              -> 201 create (intent only, G6-Q5 gated)
+    POST /api/payments (razorpay, no keys)          -> 501 (G6-Q5 env gate)
+    POST /api/payments/webhook                      -> 401 no token; 422 unknown gateway
     PATCH /api/payments/{payment_id}/status         -> 422 invalid status
     POST /api/voice/call-completed (X-Service-Token)-> 200 accepted (transcript persistence hook, D1)
     POST /api/auth/register (unique phone)          -> 201 create
@@ -80,6 +82,7 @@ ENDPOINTS = (
     "/api/prescriptions/{prescription_id}/status",
     "/api/payments",
     "/api/payments/{payment_id}/status",
+    "/api/payments/webhook",
     "/api/voice/call-completed",
 )
 
@@ -253,6 +256,23 @@ def main() -> int:
 
     s, _ = request("PATCH", f"/api/payments/{pay_id}/status", {"status": "bogus"}, headers=auth)
     check("PATCH payment status invalid -> 422", s == 422, f"(got {s})")
+
+    # --- payments: env-gated dispatch 501 + webhook auth (G6-Q5) ------------
+    if os.environ.get("RAZORPAY_KEY_ID"):
+        print("SKIP - RAZORPAY_KEY_ID configured; the 501 gate is not "
+              "exercisable (live dispatch territory runs in CI)")
+    else:
+        s, _ = request("POST", "/api/payments", {**pay_payload, "gateway": "razorpay"}, headers=auth)
+        check("POST /api/payments razorpay without keys -> 501", s == 501, f"(got {s})")
+
+    s, _ = request("POST", "/api/payments/webhook", {"event": "payment.captured"})
+    check("POST /api/payments/webhook (no token) -> 401", s == 401, f"(got {s})")
+
+    s, _ = request(
+        "POST", "/api/payments/webhook", {"some": "unknown"},
+        headers={"X-Service-Token": SERVICE_TOKEN},
+    )
+    check("POST /api/payments/webhook (unknown gateway) -> 422", s == 422, f"(got {s})")
 
     # --- voice: call-completed needs the service token (enforcement) ---------
     s, j = request(

@@ -25,5 +25,5 @@ Verified by `backend/tests/test_uml_diagrams.py` (stdlib, source-level).
   with the `/call-completed` DB write marked as Docker/CI-owned.
 - **05 deployment** — the Docker Compose stack the next phase actually runs.
 - **06 call lifecycle** — one inbound call end-to-end, including the
-  `PAYMENT_SENT` / `PAYMENT_EXPIRED` loop (G6-Q5 payments still open: the diagram
-  shows the loop as designed, real gateway calls stay gated until decided).
+  `PAYMENT_SENT` / `PAYMENT_EXPIRED` loop (G6-Q5 payments wired
+  spec-payments.md: env-gated gateway dispatch + verified webhooks).

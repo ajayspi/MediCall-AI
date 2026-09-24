@@ -103,6 +103,7 @@ EXPECTED_ENDPOINTS = {
         ("post", ""),
         ("get", "/{payment_id}"),
         ("patch", "/{payment_id}/status"),
+        ("post", "/webhook"),
     },
 }
 

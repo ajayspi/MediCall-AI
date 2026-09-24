@@ -162,6 +162,8 @@ CREATE TABLE call_sessions (
     gateway TEXT, -- razorpay, phonepe, cashfree, manual
     gateway_ref TEXT,
     status TEXT DEFAULT 'pending', -- pending, captured, failed, refunded
+    kind TEXT DEFAULT 'consultation', -- consultation, refill, subscription (G6-Q5)
+    expires_at TIMESTAMPTZ, -- intent TTL: PAYMENT_SENT -> PAYMENT_EXPIRED leg
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -181,6 +183,12 @@ CREATE INDEX idx_clinic_users_user ON clinic_users(user_id);
 CREATE INDEX idx_users_role ON users(role) WHERE is_active = TRUE;
 CREATE INDEX idx_call_embeddings_call ON call_embeddings(call_id);
 CREATE INDEX idx_payments_clinic_status ON payments(clinic_id, status);
+
+-- Webhook idempotency (spec-payments.md Q4/A4a): at most one intent per
+-- gateway reference, so a replayed gateway webhook updates the same row.
+-- Partial index: manual intents (gateway_ref NULL) may repeat.
+CREATE UNIQUE INDEX uq_payments_gateway_ref ON payments(gateway_ref)
+    WHERE gateway_ref IS NOT NULL;
 
 -- pgvector similarity search function: find calls with similar patterns
 CREATE OR REPLACE FUNCTION search_similar_calls(
@@ -412,11 +420,17 @@ CREATE POLICY prescriptions_manage ON prescriptions
         SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
     ));
 
--- Payments: clinic staff can manage payments for their clinic
+-- Payments: clinic staff can manage payments for their clinic; the userless
+-- gateway webhook (POST /api/payments/webhook, spec-payments.md Q4/A4a) writes
+-- under the server's service bypass (app.service_request = 'on' via
+-- service_request_ctx()).
 CREATE POLICY payments_manage ON payments
-    FOR ALL USING (clinic_id IN (
-        SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
-    ));
+    FOR ALL USING (
+        clinic_id IN (
+            SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
+        )
+        OR current_setting('app.service_request', true) = 'on'
+    );
 
 -- Clinic memberships: users read their own rows; a clinic owner reads their
 -- clinic's rows; ONLY the server-side service path may INSERT them this phase

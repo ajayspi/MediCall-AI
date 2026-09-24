@@ -42,8 +42,11 @@ stateDiagram-v2
   drift from the code.
 - **Terminal states**: `COMPLETE`, `ESCALATED`, `DROPPED` have no outgoing
   transitions.
-- **Payment loop (G6-Q5 open)**: `PRESCRIPTION` and `APPOINTMENT` → `PAYMENT_SENT`
-  → `PAYMENT_EXPIRED` → back to `APPOINTMENT`. Real gateway SDK calls stay gated
-  until the payments decision lands; the router currently records intents only.
+- **Payment loop (G6-Q5 wired)**: `PRESCRIPTION` and `APPOINTMENT` → `PAYMENT_SENT`
+  → `PAYMENT_EXPIRED` → back to `APPOINTMENT`. Live gateway SDK calls are
+  env-gated (501 without keys, spec-payments.md Q5/A5a); the unified webhook
+  (`POST /api/payments/webhook`, per-gateway HMAC + service token, idempotent
+  by `gateway_ref`) advances captured intents and moves the linked call
+  `PAYMENT_SENT → COMPLETE`.
 - **API enforcement**: the calls router's `PATCH /{call_id}/state` rejects invalid
   transitions with 409 (covered by `test_api_routes.py`).

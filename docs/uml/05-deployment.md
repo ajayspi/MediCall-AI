@@ -27,6 +27,8 @@ flowchart LR
   Exotel / Knowlarity / Twilio, LiveKit).
 - **External SaaS**: LiveKit (rooms + agents), Deepgram, ElevenLabs, OpenAI, and
   the three telephony providers are deployed outside the stack.
-- Auth (RLS via Supabase `auth.users`) and real payment gateways (razorpay /
-  phonepe / cashfree) are later-phase wiring — the API phase ships the routers and
-  intent recording; the Docker/CI stage connects the stack for real.
+- Payment gateways (razorpay / phonepe / cashfree) are env-gated wiring
+  (spec-payments.md G6-Q5): the router dispatches only when keys are present
+  (501 otherwise) and the verified webhook lands on the same host; live
+  round-trips run behind CI secrets. Real credentials live in compose / CI
+  secrets, never in the repo.

@@ -16,7 +16,7 @@ flowchart LR
     Calls["/api/calls<br/>GET /api/calls (filters: state, language, severity, from, to, limit, offset)<br/>GET /api/calls/{call_id}<br/>PATCH /api/calls/{call_id}/state<br/>GET /api/calls/{call_id}/transcript"]
     Appointments["/api/appointments<br/>GET /api/appointments<br/>POST /api/appointments<br/>GET /api/appointments/{appointment_id}<br/>PATCH /api/appointments/{appointment_id}/status"]
     Prescriptions["/api/prescriptions<br/>GET /api/prescriptions<br/>POST /api/prescriptions<br/>GET /api/prescriptions/{prescription_id}<br/>PATCH /api/prescriptions/{prescription_id}/status"]
-    Payments["/api/payments<br/>GET /api/payments<br/>POST /api/payments<br/>GET /api/payments/{payment_id}<br/>PATCH /api/payments/{payment_id}/status"]
+    Payments["/api/payments<br/>GET /api/payments<br/>POST /api/payments<br/>GET /api/payments/{payment_id}<br/>PATCH /api/payments/{payment_id}/status<br/>POST /api/payments/webhook"]
 
     StateGuard["PATCH /api/calls/{call_id}/state<br/>409 on invalid transition (STATE_TRANSITIONS)"]
     StatusGuard["PATCH .../status (appointment / prescription / payment)<br/>422 on invalid status value"]
@@ -52,5 +52,13 @@ flowchart LR
   have RLS FORCED** — row visibility is scoped by `clinic_users` membership
   (identity GUC) rather than by application filtering. The seeded demo owner is
   `+919876543210` / `DemoPass!2026` (creates + owns "City Care Demo").
-- `POST /api/payments` records an intent row only; it never calls a gateway SDK
-  (G6-Q5 gated).
+- **Payments (G6-Q5 wired, spec-payments.md): consultations + prescription
+  refills bill.** `POST /api/payments` records the intent (kind: consultation /
+  refill / subscription) and dispatches the gateway request only when the
+  gateway's env keys are present (501 otherwise — `manual` stays keyless).
+  `POST /api/payments/webhook` is **identity-free by design**: verified by the
+  shared `X-Service-Token` AND the per-gateway signature (`X-Razorpay-Signature`
+  HMAC-SHA256 / PhonePe `X-VERIFY` / Cashfree `X-Verify-Hmac-Sha256`), writes
+  run under the `app.service_request` RLS bypass, and it is idempotent by
+  `gateway_ref` (unique partial index). On `captured` the linked call in
+  `PAYMENT_SENT` advances to `COMPLETE`.

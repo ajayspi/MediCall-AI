@@ -37,7 +37,9 @@ sequenceDiagram
 - Lifecycle corresponds to the state machine in 02: GREETING → TRIAGE →
   APPOINTMENT / PRESCRIPTION, with ESCALATED / DROPPED exits and the
   PAYMENT_SENT → PAYMENT_EXPIRED loop.
-- The payment leg shows the designed loop; real gateway SDK calls remain gated on
-  the G6-Q5 decision — the API currently records payment intents only.
+- The payment leg: consult/refill → intent + env-gated gateway dispatch
+  (spec-payments.md G6-Q5); the verified webhook advances a captured payment
+  and moves the linked call `PAYMENT_SENT → COMPLETE`, or `PAYMENT_EXPIRED` →
+  back to `APPOINTMENT`.
 - The `/call-completed` → `update_call_transcript` DB write is a Docker/CI-stage
   TODO (idempotent, keyed by `call_id`), matching 04-data-flow.
