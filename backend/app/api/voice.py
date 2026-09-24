@@ -102,13 +102,25 @@ async def call_completed(data: CallCompleted):
     layer stays import-light on dev machines without sqlalchemy (Docker/CI has
     it). Idempotent: keyed by call_id.
     """
-    # TODO(Docker/CI):
-    #   from app.db.postgres import update_call_transcript
-    #   await update_call_transcript(data.call_id, data.transcript,
-    #                                data.ended_at, data.duration_seconds)
+    saved = False
+    try:
+        from datetime import datetime as _dt
+
+        from app.db.postgres import update_call_transcript
+
+        ended_at = _dt.fromisoformat(data.ended_at) if data.ended_at else None
+        saved = await update_call_transcript(
+            data.call_id, data.transcript, ended_at, data.duration_seconds
+        )
+    except (ImportError, ValueError):
+        # sqlalchemy/postgres absent in source-level dev env, or malformed
+        # ended_at — accept the payload and continue (Docker/CI persists).
+        pass
+
     return {
-        "status": "saved",
+        "status": "saved" if saved else "accepted",
         "call_id": data.call_id,
         "turns": len(data.transcript),
         "state": data.state,
+        "persisted": saved,
     }

@@ -15,8 +15,9 @@ GREEN after implementation (spec-dashboards-clinic-admin.md, D1/D2/D3 approved
 toolchain (@import "tailwindcss" + @theme tokens incl. teal primary + severity,
 postcss.config.mjs with @tailwindcss/postcss, no JS tailwind config, no autoprefixer);
 clinic route group `(clinic)` with exactly 7 nav tabs (D1 — Settings lives in the
-header, not the sidebar) and 7 pages; admin route group `(admin)` with exactly 9
-views and 9 pages; shared components with nav.ts as single nav source, language
+header, not the sidebar) and 7 pages; admin real segment `admin/` (a `(admin)`
+route group would resolve to bare `/...` paths and collide with the clinic
+pages — fixed in g-ci) with exactly 9 views and 9 pages; shared components with nav.ts as single nav source, language
 badge for hi/en/ta/te/bn, severity badge for green/amber/red/critical, call-state
 badge for the 9 G3 states, medical mock data (+91, rupee); root page + layout
 rebranded "MediCall AI".
@@ -43,7 +44,9 @@ PACKAGE_JSON = FRONTEND / "package.json"
 NEXT_CONFIG = FRONTEND / "next.config.js"
 
 CLINIC = APP / "(clinic)"
-ADMIN = APP / "(admin)"
+ADMIN = APP / "admin"  # real URL segment: (admin) as a route group adds no
+# path segment and would resolve to bare /... paths that collide with the
+# clinic pages (caught by the first real `next build`, g-ci).
 RESTAURANT_GROUP = APP / "(restaurant)"
 
 CLINIC_TABS = [
@@ -76,7 +79,7 @@ ADMIN_VIEWS = [
     "/admin/audit",
 ]
 ADMIN_VIEW_FILES = [
-    ("", "page"),  # /admin overview -> (admin)/page.tsx
+    ("", "page"),  # /admin overview -> admin/page.tsx (real segment)
     ("live-monitor", "page"),
     ("clinics", "page"),
     ("doctors", "page"),
@@ -244,7 +247,7 @@ class TestClinicDashboard(unittest.TestCase):
 
 class TestAdminDashboard(unittest.TestCase):
     def test_admin_layout_exists(self):
-        self.assertTrue((ADMIN / "layout.tsx").exists(), "(admin)/layout.tsx missing")
+        self.assertTrue((ADMIN / "layout.tsx").exists(), "admin/layout.tsx missing (real /admin segment)")
 
     def test_admin_nav_exactly_nine(self):
         self.assertEqual(nav_hrefs("ADMIN_NAV"), ADMIN_VIEWS)
@@ -252,7 +255,7 @@ class TestAdminDashboard(unittest.TestCase):
     def test_admin_nine_pages_exist(self):
         for cluster, name in ADMIN_VIEW_FILES:
             target = ADMIN / cluster / f"{name}.tsx"
-            self.assertTrue(target.exists(), f"(admin)/{cluster}/{name}.tsx missing")
+            self.assertTrue(target.exists(), f"admin/{cluster}/{name}.tsx missing")
 
     def test_admin_layout_uses_nav_single_source(self):
         text = read(ADMIN / "layout.tsx")

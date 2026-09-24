@@ -148,7 +148,7 @@ class TestCIWorkflow(unittest.TestCase):
 
     def test_jobs_have_expected_steps(self):
         text = read(CI_WORKFLOW)
-        for step in ("setup-python", "python3 tests/", "py_compile", "ruff check ", "npm ci", "npm run build", "docker compose up", "smoke_api.py", "docker compose down"):
+        for step in ("setup-python", "tests/test_*.py", "py_compile", "ruff check ", "npm ci", "npm run build", "docker compose up", "smoke_api.py", "docker compose down"):
             self.assertIn(step, text, f"ci.yml missing step {step!r}")
 
 

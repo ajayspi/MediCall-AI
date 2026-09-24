@@ -1,12 +1,15 @@
+"use client";
+
 import Link from "next/link";
 import { Card } from "@/components/card";
 import { StatCard } from "@/components/stat-card";
 import { LanguageBadge } from "@/components/language-badge";
 import { SeverityBadge } from "@/components/severity-badge";
 import { CallStateBadge } from "@/components/call-state-badge";
-import { clinicKpis, todayCalls } from "@/components/mock";
+import { useTodayCalls } from "@/lib/api";
 
 export default function ClinicOverviewPage() {
+  const { calls: todayCalls, kpis: clinicKpis } = useTodayCalls();
   return (
     <div className="space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
