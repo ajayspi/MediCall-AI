@@ -7,8 +7,9 @@ call-lifecycle sequence diagram): docs/uml/ does not exist.
 GREEN after implementation:
 - 00-index.md links all six diagrams and points at the single sources
   (postgres_schema.sql, models/call.py, the routers, docker-compose.yml).
-- 01-er.md erDiagram: the 9 tables from postgres_schema.sql with FK edges
-  matching the schema exactly (incl. the API-phase payments table).
+- 01-er.md erDiagram: the 10 tables from postgres_schema.sql with FK edges
+  matching the schema exactly (incl. the API-phase payments table and the
+  G6-Q1 auth `users` table).
 - 02-state-machine.md stateDiagram-v2: the mermaid transition edge set EQUALS
   STATE_TRANSITIONS parsed from app/models/call.py via ast (load-bearing
   cross-check — the diagram cannot drift from the code).
@@ -42,6 +43,7 @@ DIAGRAMS = ("01-er", "02-state-machine", "03-api-contracts", "04-data-flow", "05
 
 TABLES = (
     "clinics",
+    "users",
     "clinic_users",
     "calls",
     "appointments",
@@ -67,6 +69,7 @@ ER_EDGES = (
     ("calls", "||--o{", "payments", "call_id (SET NULL)"),
     ("appointments", "||--o{", "payments", "appointment_id (SET NULL)"),
     ("calls", "||--o|", "calls", "appointment_id (SET NULL)"),
+    ("users", "||--o{", "clinic_users", "user_id"),
 )
 
 ER_SPOT_COLUMNS = {
@@ -76,6 +79,7 @@ ER_SPOT_COLUMNS = {
     "language_codes": ("TEXT code UK",),
     "payments": ("NUMERIC(10,2) amount", "TEXT gateway"),
     "call_sessions": ("TEXT livekit_room",),
+    "users": ("TEXT email UK", "TEXT otp_code_hash", "TEXT role"),
 }
 
 # Full-path endpoint strings (router prefix + path) that must appear in 03-api-contracts.md

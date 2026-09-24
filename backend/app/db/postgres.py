@@ -134,6 +134,39 @@ class Clinic(Base):
         return f"<Clinic id={self.id} name={self.name} city={self.city}>"
 
 
+class User(Base):
+    """Application user (Phase-1 auth, G6-Q1): email and/or phone identity."""
+
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    email: Mapped[Optional[str]] = mapped_column(String(255), unique=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(30), unique=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # pbkdf2_sha256$iter$salt$hash (NULL for SSO-only users)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255))
+    # HMAC-SHA256 of the last issued OTP (code never stored raw)
+    otp_code_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    otp_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+    otp_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    # owner, staff, triage_agent, doctor, readonly
+    role: Mapped[str] = mapped_column(String(20), default="staff")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz, onupdate=now_tz
+    )
+
+    def __repr__(self) -> str:
+        return f"<User id={self.id} name={self.name}>"
+
+
 class ClinicUser(Base):
     """Multi-tenant clinic staff/users."""
 
@@ -149,9 +182,11 @@ class ClinicUser(Base):
         nullable=False,
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
     )
-    # owner, staff, readonly, triage_agent
+    # owner, staff, triage_agent, doctor, readonly
     role: Mapped[str] = mapped_column(String(20), default="staff")
     # hi, en, ta, te, bn
     language_pref: Mapped[str] = mapped_column(String(5), default="en")
@@ -875,6 +910,107 @@ async def list_language_codes(active_only: bool = True) -> list[LanguageCode]:
             query = query.where(LanguageCode.is_active.is_(True))
         query = query.order_by(LanguageCode.code)
         result = await session.execute(query)
+        return list(result.scalars().all())
+
+
+# ─── Auth CRUD (Phase-1, G6-Q1 — used by app/api/auth.py) ───────────────────
+
+async def create_user(
+    name: str,
+    password_hash: Optional[str] = None,
+    phone: Optional[str] = None,
+    email: Optional[str] = None,
+    role: str = "staff",
+) -> User:
+    """Create an application user (register flow)."""
+    async with SessionFactory() as session:
+        stmt = (
+            insert(User)
+            .values(
+                name=name,
+                phone=phone,
+                email=(email or "").lower() or None,
+                password_hash=password_hash,
+                role=role,
+            )
+            .returning(User)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one()
+
+
+async def get_user(user_id: uuid.UUID) -> Optional[User]:
+    """Fetch a user by id."""
+    async with SessionFactory() as session:
+        return await session.get(User, user_id)
+
+
+async def find_user(username: str) -> Optional[User]:
+    """Find a user by phone (exact) or email (case-insensitive)."""
+    async with SessionFactory() as session:
+        if username.startswith("+"):
+            stmt = select(User).where(User.phone == username)
+        else:
+            stmt = select(User).where(User.email == username.strip().lower())
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+
+async def set_user_otp(
+    user_id: uuid.UUID, code_hash: str, expires_at: datetime
+) -> None:
+    """Store the hashed OTP + expiry; resets the attempt counter."""
+    async with SessionFactory() as session:
+        stmt = (
+            update(User)
+            .where(User.id == user_id)
+            .values(
+                otp_code_hash=code_hash,
+                otp_expires_at=expires_at,
+                otp_attempts=0,
+                updated_at=now_tz(),
+            )
+            .returning(User.id)
+        )
+        await session.execute(stmt)
+        await session.commit()
+
+
+async def bump_user_otp_attempts(user_id: uuid.UUID) -> int:
+    """Increment the failed-OTP counter; returns the new count."""
+    async with SessionFactory() as session:
+        user = await session.get(User, user_id)
+        if user is None:
+            return 0
+        user.otp_attempts = (user.otp_attempts or 0) + 1
+        await session.commit()
+        return user.otp_attempts
+
+
+async def clear_user_otp(user_id: uuid.UUID) -> None:
+    """Wipe OTP state after a successful verification."""
+    async with SessionFactory() as session:
+        stmt = (
+            update(User)
+            .where(User.id == user_id)
+            .values(
+                otp_code_hash=None,
+                otp_expires_at=None,
+                otp_attempts=0,
+                updated_at=now_tz(),
+            )
+            .returning(User.id)
+        )
+        await session.execute(stmt)
+        await session.commit()
+
+
+async def list_clinic_memberships(user_id: uuid.UUID) -> list[ClinicUser]:
+    """Clinic memberships for /api/auth/me."""
+    async with SessionFactory() as session:
+        stmt = select(ClinicUser).where(ClinicUser.user_id == user_id)
+        result = await session.execute(stmt)
         return list(result.scalars().all())
 
 

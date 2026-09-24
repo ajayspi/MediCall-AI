@@ -11,6 +11,7 @@ services:
       - DATABASE_URL=postgresql://medicall:medicall@postgres:5432/medicall
       - REDIS_URL=redis://redis:6379
       - FRONTEND_URL=${FRONTEND_URL}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-dev-secret-change-me}
       - DEBUG=true
       - LOG_LEVEL=debug
       - ENVIRONMENT=development

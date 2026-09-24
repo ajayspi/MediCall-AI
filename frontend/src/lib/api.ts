@@ -96,9 +96,12 @@ function buildKpis(base: Kpi[], calls: CallView[]): Kpi[] {
 // ---- queries -----------------------------------------------------------------
 
 async function fetchCalls(clinicId: string): Promise<ApiCall[]> {
+  const token = getToken();
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(
     `${API_BASE}/api/calls?clinic_id=${encodeURIComponent(clinicId)}`,
-    { headers: { Accept: "application/json" } },
+    { headers },
   );
   if (!res.ok) throw new Error(`GET /api/calls -> ${res.status}`);
   return (await res.json()) as ApiCall[];
@@ -123,4 +126,86 @@ export function useTodayCalls(baseKpis: Kpi[] = clinicKpis) {
   const calls = useFallback ? todayCalls : apiCalls;
   const kpis = useFallback ? baseKpis : buildKpis(baseKpis, calls);
   return { calls, kpis, isLive: !useFallback, isLoading: q.isPending };
+}
+
+// ---- auth surface (Phase-1, G6-Q1 — spec-auth.md) ---------------------------
+// Tokens are stateless HMAC-SHA256 JWTs from POST /api/auth/*; localStorage
+// holds the bearer token; demo mode (NEXT_PUBLIC_USE_MOCK=true/auto) issues a
+// local demo token so offline dev still reaches the dashboard shells.
+
+const TOKEN_KEY = "medicall_token";
+
+export type AuthUser = {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  role: string;
+  memberships?: { clinic_id: string; role: string }[];
+};
+
+export type AuthSession = {
+  access_token: string;
+  token_type: string;
+  user: AuthUser;
+};
+
+export function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(TOKEN_KEY);
+}
+
+export function setToken(token: string): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearToken(): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(TOKEN_KEY);
+}
+
+async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+  return (await res.json()) as T;
+}
+
+export function loginPassword(username: string, password: string): Promise<AuthSession> {
+  return apiPost<AuthSession>("/api/auth/login", { username, password });
+}
+
+export function loginOtpRequest(phone: string): Promise<{ status: string; expires_in: number }> {
+  return apiPost<{ status: string; expires_in: number }>("/api/auth/otp/request", { phone });
+}
+
+export function loginOtpVerify(phone: string, code: string): Promise<AuthSession> {
+  return apiPost<AuthSession>("/api/auth/otp/verify", { phone, code });
+}
+
+export function registerUser(input: {
+  name: string;
+  phone?: string;
+  email?: string;
+  password: string;
+}): Promise<AuthUser> {
+  return apiPost<AuthUser>("/api/auth/register", input);
+}
+
+export async function fetchMe(token: string): Promise<AuthUser> {
+  const res = await fetch(`${API_BASE}/api/auth/me`, {
+    headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`GET /api/auth/me -> ${res.status}`);
+  return (await res.json()) as AuthUser;
 }

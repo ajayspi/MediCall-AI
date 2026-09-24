@@ -115,7 +115,10 @@ class TestOtp(unittest.TestCase):
     def test_verify_otp_valid(self):
         phone, code = "+919845012345", generate_otp()
         stored = hash_otp(code, phone)
-        self.assertTrue(verify_otp(code, stored, expires_at=time.time() + 600, attempts=0))
+        # phone key is required: the stored hash is HMAC keyed by it
+        self.assertTrue(
+            verify_otp(code, stored, expires_at=time.time() + 600, attempts=0, phone=phone)
+        )
 
     def test_verify_otp_wrong_code(self):
         phone = "+919845012345"
@@ -240,9 +243,11 @@ class TestSchemaRepair(unittest.TestCase):
 
     def test_doctor_role_in_comments(self):
         users_block = SCHEMA_TEXT.split("CREATE TABLE users", 1)[1]
-        self.assertIn("doctor", users_block.split(";", 1)[0])
+        users_block = users_block.split("CREATE TABLE clinic_users", 1)[0]
         cusers_block = SCHEMA_TEXT.split("CREATE TABLE clinic_users", 1)[1]
-        self.assertIn("doctor", cusers_block.split(";", 1)[0])
+        cusers_block = cusers_block.split("CREATE TABLE calls", 1)[0]
+        self.assertIn("doctor", users_block)
+        self.assertIn("doctor", cusers_block)
 
 
 # ─── SQLAlchemy layer ────────────────────────────────────────────────────────

@@ -250,13 +250,14 @@ def included_router_attrs(tree) -> set:
 
 
 class TestMainApp(unittest.TestCase):
-    def test_main_registers_all_six_routers(self):
+    def test_main_registers_all_seven_routers(self):
+        """G6-Q1 added the auth router (prefix=/api/auth) to the original six."""
         tree = py_tree(MAIN)
         included = included_router_attrs(tree)
         self.assertEqual(
-            {"voice", "clinics", "calls", "appointments", "prescriptions", "payments"},
+            {"voice", "auth", "clinics", "calls", "appointments", "prescriptions", "payments"},
             included,
-            f"main.py must include_router all 6; got {sorted(included)}",
+            f"main.py must include_router all 7; got {sorted(included)}",
         )
 
     def test_main_voice_keeps_api_voice_prefix(self):

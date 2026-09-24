@@ -26,12 +26,28 @@ CREATE TABLE clinics (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Auth: application users (Phase-1 auth, G6-Q1 — email and/or phone identity)
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email TEXT UNIQUE,          -- NULL for phone-only registrations
+    phone TEXT UNIQUE,          -- +91xxxxxxxxxx India (NULL for email-only)
+    name TEXT NOT NULL,
+    password_hash TEXT,         -- pbkdf2_sha256$iter$salt$hash (NULL for SSO-only)
+    otp_code_hash TEXT,         -- HMAC-SHA256 of last issued OTP (code never stored raw)
+    otp_expires_at TIMESTAMPTZ,
+    otp_attempts INTEGER DEFAULT 0,
+    role TEXT DEFAULT 'staff',  -- owner, staff, triage_agent, doctor, readonly
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Multi-tenant: Clinic staff/users
 CREATE TABLE clinic_users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-    role TEXT DEFAULT 'staff', -- owner, staff, readonly, triage_agent
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT DEFAULT 'staff', -- owner, staff, triage_agent, doctor, readonly
     language_pref TEXT DEFAULT 'en', -- hi, en, ta, te, bn
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(clinic_id, user_id)
@@ -161,6 +177,8 @@ CREATE INDEX idx_appointments_scheduled ON appointments(scheduled_at);
 CREATE INDEX idx_appointments_status ON appointments(status);
 CREATE INDEX idx_clinics_active ON clinics(is_active);
 CREATE INDEX idx_clinic_users_clinic ON clinic_users(clinic_id);
+CREATE INDEX idx_clinic_users_user ON clinic_users(user_id);
+CREATE INDEX idx_users_role ON users(role) WHERE is_active = TRUE;
 CREATE INDEX idx_call_embeddings_call ON call_embeddings(call_id);
 CREATE INDEX idx_payments_clinic_status ON payments(clinic_id, status);
 
@@ -274,7 +292,28 @@ CREATE TRIGGER update_prescriptions_updated_at BEFORE UPDATE ON prescriptions
 CREATE TRIGGER update_payments_updated_at BEFORE UPDATE ON payments
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
+CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- Auth: local replacement for Supabase's auth.uid() (spec-auth.md Q2).
+-- The API sets app.current_user_id per request; auth.uid() reads it back.
+-- RLS is ENABLED but NOT FORCED this phase: the table (owner) connection
+-- bypasses it, so the unauthenticated Phase-1 API keeps working. Enforcement
+-- (FORCE ROW LEVEL SECURITY + a non-owner medicall_app role + per-request
+-- GUC) lands together with the router guards in the enforcement phase.
+CREATE SCHEMA IF NOT EXISTS auth;
+
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid
+LANGUAGE sql STABLE AS $$
+    SELECT NULLIF(current_setting('app.current_user_id', true), '')::uuid
+$$;
+
+-- Role the GRANTs below target (Supabase 'authenticated' role recreated
+-- locally so the schema loads on plain PostgreSQL instead of failing).
+CREATE ROLE authenticated NOLOGIN;
+
 -- Row Level Security (RLS) — multi-tenant data isolation
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE clinics ENABLE ROW LEVEL SECURITY;
 ALTER TABLE clinic_users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE calls ENABLE ROW LEVEL SECURITY;
@@ -290,6 +329,10 @@ CREATE POLICY clinic_own_data ON clinics
             WHERE user_id = auth.uid() AND role = 'owner'
         )
     );
+
+-- Users manage their own profile row
+CREATE POLICY users_own_data ON users
+    FOR ALL USING (id = auth.uid());
 
 -- Staff can read clinic info
 CREATE POLICY clinic_staff_read ON clinics
@@ -337,6 +380,7 @@ CREATE POLICY language_codes_read ON language_codes
 -- Grant permissions for authenticated users (Supabase auth → PostgreSQL auth bridge)
 GRANT ALL ON clinics TO authenticated;
 GRANT ALL ON clinic_users TO authenticated;
+GRANT ALL ON users TO authenticated;
 GRANT ALL ON calls TO authenticated;
 GRANT ALL ON appointments TO authenticated;
 GRANT ALL ON prescriptions TO authenticated;

@@ -8,7 +8,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import os
 
-from app.api import appointments, calls, clinics, payments, prescriptions, voice
+from app.api import (
+    appointments,
+    auth,
+    calls,
+    clinics,
+    payments,
+    prescriptions,
+    voice,
+)
 from app.db.postgres import init_db
 
 
@@ -46,6 +54,9 @@ app.include_router(calls.router)
 app.include_router(appointments.router)
 app.include_router(prescriptions.router)
 app.include_router(payments.router)
+app.include_router(
+    auth.router, prefix="/api/auth", tags=["auth"]
+)
 
 
 @app.get("/health")

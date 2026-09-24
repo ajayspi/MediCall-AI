@@ -22,7 +22,7 @@ runner, or the compose host. It drives the executable endpoint contract:
     PATCH /api/prescriptions/{prescription_id}/status -> 422 invalid status; 200 valid status
     POST /api/payments                              -> 201 create (intent only, G6-Q5 gated)
     PATCH /api/payments/{payment_id}/status         -> 422 invalid status
-    POST /api/voice/call-completed                  -> 200 accepted (transcript persistence hook, D1)
+    POST /api/voice/call-completed                  -> 200 accepted (transcript persistence hook, D1)\n    POST /api/auth/register (unique phone)          -> 201 create\n    POST /api/auth/register (dup phone)             -> 409 duplicate\n    POST /api/auth/login                            -> 200 access_token; 401 bad creds\n    GET  /api/auth/me (Bearer)                      -> 200 current user\n    POST /api/auth/otp/request                      -> 200 otp_sent\n    GET  /api/auth/providers                        -> 200 method flags
 
 Usage:
     python3 smoke_api.py                       # BASE_URL defaults to http://localhost:8001
@@ -64,14 +64,17 @@ ENDPOINTS = (
 )
 
 
-def request(method: str, path: str, body=None):
+def request(method: str, path: str, body=None, headers=None):
     """Return (status, decoded-json-or-None). Network errors -> (-1, {})."""
     data = json.dumps(body).encode() if body is not None else None
+    hdrs = {"Content-Type": "application/json", "Accept": "application/json"}
+    if headers:
+        hdrs.update(headers)
     req = urllib.request.Request(
         BASE_URL + path,
         data=data,
         method=method,
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        headers=hdrs,
     )
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
@@ -212,6 +215,38 @@ def main() -> int:
 
     s, _ = request("PATCH", f"/api/payments/{pay_id}/status", {"status": "bogus"})
     check("PATCH payment status invalid -> 422", s == 422, f"(got {s})")
+
+    # --- auth: register -> login -> bearer me + OTP surface (G6-Q1) -----------
+    auth_phone = "+91" + "98" + str(uuid.uuid4().int)[-8:]  # 10-digit, 9-led
+    register_payload = {
+        "name": "Smoke User",
+        "phone": auth_phone,
+        "email": f"smoke{uuid.uuid4().hex[:8]}@example.in",
+        "password": "S3cure!pass",
+    }
+    s, u = request("POST", "/api/auth/register", register_payload)
+    check("POST /api/auth/register -> 201", s == 201 and u and u.get("id"), f"(got {s})")
+
+    s, _ = request("POST", "/api/auth/register", register_payload)
+    check("POST /api/auth/register dup phone -> 409", s == 409, f"(got {s})")
+
+    s, tok = request("POST", "/api/auth/login", {"username": auth_phone, "password": "S3cure!pass"})
+    check("POST /api/auth/login -> 200 + bearer token", s == 200 and tok and tok.get("access_token"), f"(got {s})")
+    auth_token = (tok or {}).get("access_token", "")
+
+    s, _ = request("POST", "/api/auth/login", {"username": auth_phone, "password": "wrong-pass"})
+    check("POST /api/auth/login bad creds -> 401", s == 401, f"(got {s})")
+
+    s, me = request(
+        "GET", "/api/auth/me", headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    check("GET /api/auth/me -> 200 (bearer)", s == 200 and me and me.get("id"), f"(got {s})")
+
+    s, otp = request("POST", "/api/auth/otp/request", {"phone": auth_phone})
+    check("POST /api/auth/otp/request -> 200 otp_sent", s == 200 and otp and otp.get("status") == "otp_sent", f"(got {s})")
+
+    s, prov = request("GET", "/api/auth/providers")
+    check("GET /api/auth/providers -> 200 flags", s == 200 and prov and prov.get("password") is True, f"(got {s})")
 
     # --- voice: call-completed transcript persistence hook (D1) ---------------
     s, j = request(
