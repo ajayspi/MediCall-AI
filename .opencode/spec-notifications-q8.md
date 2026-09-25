@@ -1,11 +1,11 @@
-# G6-Q8 Notifications — spec (APPROVED)
+# G6-Q8 Notifications — spec (APPROVED → GREEN)
 
 | | |
 |---|---|
 | **Phase** | G6-Q8: multi-channel messaging layer (WhatsApp-first) for the voice call center |
 | **Tracker question** | "Notifications: SMS/WhatsApp/email/push provider per language; appointment reminders + no-show flow?" |
 | **Branch** | `g-notify` off `g-guardrails` tip `c01bbac` |
-| **Status** | APPROVED (sign-off 2026-09-25: Q1=A1c, Q2=A2c, Q3=A3a, Q4=A4a) |
+| **Status** | APPROVED → **GREEN** (implemented 2026-09-25; regression 371/371, compileall 0) |
 | **Date** | 2026-09-25 |
 
 ## 0. Sign-off record (2026-09-25, question tool)
@@ -140,3 +140,36 @@ verifiable on this PC (no live providers, no SDK installs).
   `py -3.14`.
 - Identity-gated endpoints only — no `IDENTITY_FREE_ENDPOINTS` extension.
 - Full regression baseline 319 must hold + new tests.
+
+## 7. Implementation record (GREEN, 2026-09-25)
+
+- **RED commit `791a942` (52 tests, 21 FAIL + 30 ERROR + exit 1)**: new
+  `tests/test_notifications_q8.py` (module structure, 5-kind × 5-language
+  templates + fixed EN vectors, WhatsApp-first chains, env gates, lazy
+  dispatch, fallback orchestration with injectable dispatch, email MIME,
+  schema table + policy, ORM helpers, router structure + identity gate,
+  payments hook, auth-untouched, smoke/docs refs) + `test_api_routes`
+  ROUTER_MODULES/EXPECTED_ENDPOINTS/8-router set + enforcement ROUTER_MODULES.
+  Latent bugs caught before GREEN: `and`-chained asserts short-circuit (None
+  is falsy → the second assert never ran); first-pass `fn_block` sliced text
+  by line numbers as character offsets (fixed to the established
+  splitlines(keepends=True) helper — the RED suite is code too).
+- **feat commit `9bfa49c` (371/371 ALL PASS, compileall 0)**: `app/services/
+  notifications.py` (catalog + templates + env gates + lazy dispatch +
+  orchestration; module-level imports stdlib-only), `app/schemas/
+  notification.py`, `app/api/notifications.py` (GET "" + POST /send — 501
+  no-channel gate, records rows Q4=A4a), `postgres_schema.sql`
+  (`notifications` table + `uq_notifications_provider_ref` partial unique +
+  `notifications_send` policy with the `app.service_request` OR-clause +
+  grants), `postgres.py` (`Notification` ORM + `create_notification` +
+  `list_notifications`), `main.py` 8th router, `.env.example` + compose
+  channel keys, `payments.py` `_send_notification_payment_link` hook for
+  kind link/upi (non-fatal, never 501s), `smoke_api.py` 501 check,
+  `docs/uml/03-api-contracts.md` `/api/notifications`.
+- **docs commit (tip; count not moved)**: 03-api-contracts Notes + mermaid node
+  (in feat — executable contract), 01-er 11th table, 00-index, HANDOVER Q8
+  DONE, tracker record, spec status GREEN.
+- **Structure gotcha honored**: notifications router endpoints take
+  `user=Depends(get_current_user)` (untyped form); no `IDENTITY_FREE_ENDPOINTS`
+  extension; SMS env keys distinct from telephony `KNOWLARITY_*`; G1–G7 locks
+  untouched.

@@ -92,7 +92,7 @@ Not specified anywhere yet, each needs a decision before build:
 - **G6-Q1 Auth**: Full incl. ABHA login (OTP + password + Google/Microsoft SSO + ABHA).
 - **G6-Q6 Telephony**: Multiple fallback sources — wire Exotel + Knowlarity + Twilio India all with fallback chain, no single primary.
 - **G6-Q7 EHR/ABDM**: Transcript only for Phase 1 (no EHR writes; calls/appointments/prescriptions local only).
-- **G6-Q2/Q3/Q4/Q5/Q8/Q9/Q10** (consent-retention, guardrails, language fallback, payment flows, notifications, KPIs, deploy topology): still open — answer before their respective build sessions.
+- **G6-Q2/Q4/Q9/Q10** (consent-retention, language fallback, KPIs, deploy topology): still open — answer before their respective build sessions. (Q3 guardrails → DONE `c01bbac`; Q5 payments → DONE `4812795`; Q8 notifications → DONE on `g-notify`.)
 - **Next**: fresh session, one task, starting with G1+G2 (make the app import: fix `main.py`, rewrite `postgres.py` so it parses).
 
 ## Implementation Record — G1+G2 DONE (2026-09-23)
@@ -621,7 +621,40 @@ Not specified anywhere yet, each needs a decision before build:
   `ESCALATE_PHRASES.get(...)` call so the literal survives the per-language
   swap; RED suites are code too — an unbound var in a comprehension only
   surfaces when the suite is first exercised at GREEN time.
-- **Next**: answer G6-Q4 (language fallback) / Q8 (notifications) / Q2
+- **G6-Q8 NOTIFICATIONS DONE (g-notify, off g-guardrails tip `c01bbac`; spec
+  `2aa98f8` APPROVED → GREEN; RED `791a942` 52 tests 21 FAIL+30 ERROR → feat
+  `9bfa49c` → docs tip; regression **371/371**, compileall 0)** — sign-off Q1=A1c (WhatsApp-first
+  Meta Cloud API primary; SMS Knowlarity→MSG91 fallback; email SMTP per kind),
+  Q2=A2c (full catalog: payment_link whatsapp→sms→email, appointment_reminder
+  whatsapp→sms→email, no_show_followup whatsapp→sms, otp whatsapp→sms,
+  payment_receipt email→whatsapp; per-language templates all 5 languages;
+  push=FCM env-gated kind stub, lazy/never fired), Q3=A3a (env-gated stdlib
+  builders + `channel_env_ready` + lazy `dispatch_channel`; manual POST
+  `/api/notifications/send` 501s without keys; upstream hooks never fail),
+  Q4=A4a (`notifications` table + `uq_notifications_provider_ref` UNIQUE
+  partial index + `notifications_send` policy with `app.service_request`
+  OR-clause mirroring `payments_manage`; writes via service_request_ctx()).
+  Delivered: `app/services/notifications.py` (CHANNELS/KINDS/
+  DEFAULT_CHANNEL_ORDER/CHANNEL_PROVIDER_KEYS single source + 5×5 templates +
+  subjects, render/channel_env_ready/sms_provider_ready/resolve_channel_
+  provider/dispatch/send orchestration), `app/schemas/notification.py`,
+  `app/api/notifications.py` 8th router (identity-gated GET "" + POST /send),
+  schema table+index+policy+grants, postgres.py Notification ORM +
+  create/list, `payments.py` `_send_notification_payment_link` hook for
+  kind link/upi (non-fatal side-effect; never 501s a payment create;
+  delivers PAYMENT_LINK_BASE_URL/pay/<id> to the linked appointment's phone
+  with the clinic name), `.env.example`+compose channel keys (WHATSAPP_TOKEN/
+  PHONE_ID, KNOWLARITY_SMS_TOKEN/SENDER_ID, MSG91_AUTH_KEY/SENDER_ID/ROUTE,
+  SMTP_*, FCM_*), smoke_api 501 check. Docs: 03-api-contracts node+notes
+  (in feat), 01-er 11th table, 00-index, HANDOVER, tracker, spec GREEN.
+- **Gotchas (one-line rules)**: assert-chains like
+  `self.assertX(...) and self.assertY(...)` silently skip the second assert
+  (None is falsy) — split them; `fn_block` must slice by LINES
+  (`splitlines(keepends=True)`), never by character offsets; helpers named
+  exactly so substring contracts hold (`_send_notification_payment_link`
+  naturally contains `send_notification`); the contracts doc lives at the
+  REPO root `docs/uml/`, not `backend/docs`.
+- **Next**: answer G6-Q4 (language fallback) / Q2
   (consent/DPDP) / Q9 (KPIs) / Q10 (deploy topology) → live provider
   round-trips behind CI secrets → run the ci.yml stack job on a Docker host →
   merge branch tips to main.

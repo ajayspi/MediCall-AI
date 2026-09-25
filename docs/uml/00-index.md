@@ -16,7 +16,7 @@ Verified by `backend/tests/test_uml_diagrams.py` (stdlib, source-level).
 ## Why these six
 
 - **01 ER** — multi-tenant `clinic_id` spine (the locked tenancy model), the Phase-1
-  transcript-only EHR shape, and the API-phase `payments` table.
+  transcript-only EHR shape, and the API-phase `payments` + `notifications` tables.
 - **02 state machine** — the product's core differentiator; the test asserts the
   mermaid edge set **equals** `STATE_TRANSITIONS` parsed from `models/call.py`, so
   the diagram cannot drift from the code.

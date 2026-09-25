@@ -132,6 +132,32 @@ is the launchpad.
   `31b28d1` → RED 37-test 36-fail → feat `0df6962`). Proof:
   `tests/test_guardrails_q3.py` 37/37 GREEN; regression **319/319**;
   compileall 0.
+- ✅ **NOTIFICATIONS (G6-Q8) DONE** — WhatsApp-first messaging layer,
+  sign-off Q1=A1c (Meta Cloud API primary; SMS Knowlarity→MSG91 fallback;
+  email SMTP per kind), Q2=A2c (full catalog: payment_link /
+  appointment_reminder / no_show_followup / otp / payment_receipt with
+  per-kind channel orders and per-language templates for all 5 languages;
+  push=FCM env-gated kind stub), Q3=A3a (env-gated stdlib request builders +
+  `channel_env_ready` + lazy `dispatch_channel` — a provider client imports
+  only on a keyed host; `send_notification` walks DEFAULT_CHANNEL_ORDER with
+  the first ready channel; manual POST `/api/notifications/send` 501s without
+  keys; **upstream hooks never fail or 501**), Q4=A4a (new `notifications`
+  table + `uq_notifications_provider_ref` partial unique + `notifications_send`
+  policy with the `app.service_request` OR-clause mirroring `payments_manage`).
+  New `app/services/notifications.py` (catalog single source, 5×5 templates +
+  email subjects, channel env gates + provider resolution, request builders,
+  lazy dispatch, send orchestration with injectable dispatch for tests) +
+  `app/api/notifications.py` 8th router (identity-gated GET "" list + POST
+  /send), schema table + policy + grants, `postgres.py` `Notification` ORM +
+  `create_notification`/`list_notifications`, payments `create_payment` hook
+  for kind link/upi (`_send_notification_payment_link` — delivers the
+  PAYMENT_LINK_BASE_URL/pay/<id> link to the linked appointment's phone,
+  recorded non-fatal, never breaks/501s a payment), `.env.example` + compose
+  channel keys, `smoke_api.py` 501 gate check. Branch `g-notify` off
+  `g-guardrails` tip `c01bbac` (spec `2aa98f8` APPROVED → RED `791a942` →
+  feat `9bfa49c` → docs tip).
+  Proof: `tests/test_notifications_q8.py` 52/52 GREEN; regression
+  **371/371**; compileall 0.
 - ▶️ **NEXT: live provider round-trips behind CI secrets** (Deepgram/
   ElevenLabs/OpenAI + LiveKit rooms + real gateway SDK dispatch + signed
   webhook end-to-end) and **run the ci.yml stack job on a Docker host** (RLS/
@@ -151,7 +177,7 @@ is the launchpad.
 
 ## 4. Still open (answer before the session that needs them)
 G6-Q2 consent/retention (DPDP), Q4 language fallback,
-Q8 notifications, Q9 MVP KPIs, Q10 deploy topology.
+Q9 MVP KPIs, Q10 deploy topology.
 
 ## 5. Verify first (before any edit)
 ```
@@ -170,6 +196,7 @@ tree — keep it clean; each phase gets its own `.worktrees\<name>` branch via
 ## 6. Spec index (`.opencode/`)
 - `spec-idea-refinement-gaps.md` — master tracker: gaps, sign-off, G-records ← START HERE
 - `spec-payments.md` — G6-Q5 payment flows + gateway wiring (Q1–Q5 APPROVED; DONE)
+- `spec-notifications-q8.md` — G6-Q8 WhatsApp-first notifications (Q1–Q4 APPROVED; DONE)
 - `spec-guardrails-q3.md` — G6-Q3 clinical guardrails (Q1–Q4 APPROVED; DONE)
 - `spec-docker-ci.md` — Docker/CI phase spec (Q1 local+CI, Q2 client+2 pages, Q3 3-job workflow; DONE)
 - `spec-auth.md` — AuthN/Z (G6-Q1) + local-schema repair (Q1–Q4 APPROVED; DONE)
