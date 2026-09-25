@@ -5,7 +5,7 @@
 | **Phase** | G6-Q4: language layer hardening — confidence-low STT fallback chain + per-language TTS voice map + single-source 5-language catalog |
 | **Tracker question** | "Languages: exact 5 (hi/en/ta/te/bn) for MVP; fallback chain when STT confidence low; per-language TTS voice map?" |
 | **Branch** | `g-languages` off `g-notify` tip `394192c` |
-| **Status** | **APPROVED** (signed off 2026-09-25, question tool: Q1=A1 Q2=A1 Q3=A1 Q4=A1) |
+| **Status** | APPROVED → **GREEN** (implemented 2026-09-25; regression 426/426, compileall 0) |
 | **Date** | 2026-09-25 |
 
 ## 0. Sign-off record (2026-09-25, question tool)
@@ -178,8 +178,46 @@ ElevenLabs calls), mirroring the Q3/Q8 discipline.
 - Stdlib-only at module level (`py -3.14`); `compileall` lint gate; full
   regression baseline 371 must hold + new tests.
 
-## 7. Implementation record (pending)
+## 7. Implementation record (GREEN, 2026-09-25)
 
-- RED commit: —
-- feat commit: —
-- docs commit: —
+- **RED commit `e2f636f` (55 tests, 19 FAIL + 26 ERROR + exit 1)**: new
+  `tests/test_languages_q4.py` — catalog structure, exact-5 tuple, STT tags,
+  IVR digits, TTS env-key catalog (all 5 keys, code-form), fallback chain,
+  confidence threshold constant, is_supported_language, resolve_stt_language
+  behavior (high/None/low/threshold-edge/custom/env-override/custom-fallback),
+  agent_logic single-source (imports catalog, no own tuple, same tuple object,
+  G4 behavior pins for stt_language_tag/tts_voice_id/language_for_room),
+  greeting (5-language coverage, fixed EN vector, clinic-name embedding,
+  unknown/None → EN, livekit wiring, no hardcoded text), stt seam (G4 pins,
+  imports resolve, threshold env, stt_stream_with_scores present + uses
+  resolve, stt_stream preserved), tts env keys (G4 pins, keyed off catalog,
+  .env.example has all 5 canonical + no legacy names + threshold documented),
+  dedupe (postgres/notifications import the tuple, no own assignments, API
+  import chain survives), smoke refs. Suite-tooling gotcha honored: `fn_block`
+  slices by LINES (splitlines(keepends=True)).
+- **feat commit `fcdc589` (426/426 ALL PASS, compileall 0)**: new
+  `app/services/languages.py` (leaf metadata module: SUPPORTED_LANGUAGES,
+  STT_TAGS, IVR_DIGIT_LANGUAGES, TTS_VOICE_ENV_KEYS, LANGUAGE_FALLBACK_CHAIN,
+  STT_CONFIDENCE_THRESHOLD=0.6, is_supported_language,
+  resolve_stt_language with env-threshold reading) — Q2=A1; `agent_logic.py`
+  constants replaced by the catalog import (re-export keeps every G4 pin) +
+  `GREETING_TEMPLATES` (5 languages) + `greeting_for_language` (unknown/None →
+  EN template) — Q3=A1; `stt.py` `from app.services.languages import
+  resolve_stt_language` + `_env_threshold` + additive `stt_stream_with_scores`
+  (yields transcript/confidence/operative-language; `stt_stream` untouched) —
+  Q1=A1; `tts.py` `voice_for_language` keyed off `TTS_VOICE_ENV_KEYS` (the
+  `ELEVENLABS_VOICE_ID_{CODE}` form, generic → default fallback preserved) —
+  Q4=A1; `.env.example` canonical keys (ELEVENLABS_VOICE_ID + _HI/_EN/_TA/_TE/
+  _BN; legacy _HINDI/... names removed) + `STT_CONFIDENCE_THRESHOLD=0.6`;
+  `postgres.py` + `services/notifications.py` import the tuple from the
+  catalog (one object, no drift); `livekit_agent.py` greeting =
+  `agent_logic.greeting_for_language(call.caller_language, clinic_name)` +
+  the retained "Tell me briefly how we can help you today." line (EN path
+  byte-identical to before).
+- **docs commit (tip; count not moved)**: spec status GREEN + implementation
+  record (this section), tracker Q4 record + gotchas + open-list/Next refresh,
+  HANDOVER Q4 DONE. 01-er / 03-api / 00-index untouched — service-layer only
+  (no tables, no endpoints).
+- **Deferred (Docker/CI)**: `language_codes` runtime seeding of
+  `elevenlabs_voice_id` + a `/api/languages` endpoint — the table exists; this
+  phase keeps the voice map in code + env (the Q8 channel-key pattern).

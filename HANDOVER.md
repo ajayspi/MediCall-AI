@@ -158,6 +158,25 @@ is the launchpad.
   feat `9bfa49c` → docs tip).
   Proof: `tests/test_notifications_q8.py` 52/52 GREEN; regression
   **371/371**; compileall 0.
+- ✅ **LANGUAGES (G6-Q4) DONE** — language layer hardening, sign-off Q1=A1
+  (confidence-low STT fallback chain: `resolve_stt_language` — confidence ≥
+  threshold or None keeps the call language, < threshold falls the operative
+  language to English for that turn; `STT_CONFIDENCE_THRESHOLD` env default
+  0.6; additive `stt_stream_with_scores` yields transcript/confidence/
+  operative-language — the G4 `stt_stream` is untouched), Q2=A1 (new stdlib
+  `app/services/languages.py` single-source catalog: SUPPORTED_LANGUAGES /
+  STT_TAGS / IVR_DIGIT_LANGUAGES / TTS_VOICE_ENV_KEYS / LANGUAGE_FALLBACK_CHAIN
+  + `is_supported_language` + `resolve_stt_language`; agent_logic re-exports
+  the G4-pinned helpers unchanged; postgres.py + services/notifications.py
+  import the tuple from there — the 3 app copies are gone), Q3=A1 (5-language
+  `GREETING_TEMPLATES` + `greeting_for_language` in agent_logic; livekit_agent
+  greeting now localized — before, the opening TEXT was always English while
+  the TTS voice was per-language), Q4=A1 (canonical `ELEVENLABS_VOICE_ID_{CODE}`
+  keys documented in .env.example — the legacy `_HINDI/_TAMIL/...` names never
+  fired because the code always built the {CODE} form). Branch `g-languages`
+  off `g-notify` tip `394192c` (spec `1e868e9` APPROVED → RED `e2f636f` →
+  feat `fcdc589` → docs tip). Proof: `tests/test_languages_q4.py` 55/55 GREEN;
+  regression **426/426**; compileall 0.
 - ▶️ **NEXT: live provider round-trips behind CI secrets** (Deepgram/
   ElevenLabs/OpenAI + LiveKit rooms + real gateway SDK dispatch + signed
   webhook end-to-end) and **run the ci.yml stack job on a Docker host** (RLS/
@@ -176,8 +195,7 @@ is the launchpad.
   Razorpay/PhonePe/Cashfree; PostgreSQL + pgvector local (no Supabase).
 
 ## 4. Still open (answer before the session that needs them)
-G6-Q2 consent/retention (DPDP), Q4 language fallback,
-Q9 MVP KPIs, Q10 deploy topology.
+G6-Q2 consent/retention (DPDP), Q9 MVP KPIs, Q10 deploy topology.
 
 ## 5. Verify first (before any edit)
 ```
@@ -197,6 +215,7 @@ tree — keep it clean; each phase gets its own `.worktrees\<name>` branch via
 - `spec-idea-refinement-gaps.md` — master tracker: gaps, sign-off, G-records ← START HERE
 - `spec-payments.md` — G6-Q5 payment flows + gateway wiring (Q1–Q5 APPROVED; DONE)
 - `spec-notifications-q8.md` — G6-Q8 WhatsApp-first notifications (Q1–Q4 APPROVED; DONE)
+- `spec-languages-q4.md` — G6-Q4 language layer: STT confidence fallback, single-source catalog, greetings, TTS voice keys (Q1–Q4 APPROVED; DONE)
 - `spec-guardrails-q3.md` — G6-Q3 clinical guardrails (Q1–Q4 APPROVED; DONE)
 - `spec-docker-ci.md` — Docker/CI phase spec (Q1 local+CI, Q2 client+2 pages, Q3 3-job workflow; DONE)
 - `spec-auth.md` — AuthN/Z (G6-Q1) + local-schema repair (Q1–Q4 APPROVED; DONE)

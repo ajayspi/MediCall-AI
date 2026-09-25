@@ -92,7 +92,7 @@ Not specified anywhere yet, each needs a decision before build:
 - **G6-Q1 Auth**: Full incl. ABHA login (OTP + password + Google/Microsoft SSO + ABHA).
 - **G6-Q6 Telephony**: Multiple fallback sources — wire Exotel + Knowlarity + Twilio India all with fallback chain, no single primary.
 - **G6-Q7 EHR/ABDM**: Transcript only for Phase 1 (no EHR writes; calls/appointments/prescriptions local only).
-- **G6-Q2/Q4/Q9/Q10** (consent-retention, language fallback, KPIs, deploy topology): still open — answer before their respective build sessions. (Q3 guardrails → DONE `c01bbac`; Q5 payments → DONE `4812795`; Q8 notifications → DONE on `g-notify`.)
+- **G6-Q2/Q9/Q10** (consent-retention, KPIs, deploy topology): still open — answer before their respective build sessions. (Q3 guardrails → DONE `c01bbac`; Q5 payments → DONE `4812795`; Q8 notifications → DONE on `g-notify`; Q4 languages → DONE on `g-languages`.)
 - **Next**: fresh session, one task, starting with G1+G2 (make the app import: fix `main.py`, rewrite `postgres.py` so it parses).
 
 ## Implementation Record — G1+G2 DONE (2026-09-23)
@@ -654,7 +654,40 @@ Not specified anywhere yet, each needs a decision before build:
   exactly so substring contracts hold (`_send_notification_payment_link`
   naturally contains `send_notification`); the contracts doc lives at the
   REPO root `docs/uml/`, not `backend/docs`.
-- **Next**: answer G6-Q4 (language fallback) / Q2
-  (consent/DPDP) / Q9 (KPIs) / Q10 (deploy topology) → live provider
-  round-trips behind CI secrets → run the ci.yml stack job on a Docker host →
-  merge branch tips to main.
+- **G6-Q4 LANGUAGES DONE (g-languages, off g-notify tip `394192c`; spec
+  `1e868e9` APPROVED → GREEN; RED `e2f636f` 55 tests 19 FAIL+26 ERROR → feat
+  `fcdc589` → docs tip; regression **426/426** (371 + 55), compileall 0)** —
+  sign-off Q1=A1 (confidence-low STT fallback chain: `resolve_stt_language` —
+  confidence ≥ threshold, or None, keeps the call language; < threshold falls
+  the *operative* language to English for that turn; `STT_CONFIDENCE_THRESHOLD`
+  env default 0.6; additive `stt_stream_with_scores` yields
+  (transcript, confidence, language); the G4 `stt_stream` (yields str) is
+  untouched), Q2=A1 (new stdlib `app/services/languages.py` single-source
+  catalog: SUPPORTED_LANGUAGES/STT_TAGS/IVR_DIGIT_LANGUAGES/TTS_VOICE_ENV_KEYS/
+  LANGUAGE_FALLBACK_CHAIN + is_supported_language + resolve_stt_language;
+  agent_logic re-exports the G4-pinned helpers unchanged; postgres.py +
+  services/notifications.py import the tuple from there — the 3 app copies are
+  gone, one tuple object), Q3=A1 (5-language `GREETING_TEMPLATES` +
+  `greeting_for_language` in agent_logic; livekit_agent greeting wired —
+  previously the opening text was ALWAYS English while the TTS voice was
+  per-language), Q4=A1 (canonical `ELEVENLABS_VOICE_ID_{CODE}` keys documented
+  in .env.example — the old `_HINDI/_TAMIL/...` docs never fired because the
+  code always built the {CODE} form). Delivered: `app/services/languages.py`
+  (leaf, stdlib-only), agent_logic import swap + greeting templates,
+  stt.py `_env_threshold` + scores stream, tts.py `voice_for_language` keyed
+  off TTS_VOICE_ENV_KEYS, .env.example canonicalization + threshold, dedupe
+  imports. Docs: tracker + HANDOVER + spec GREEN. No tables/endpoints —
+  `language_codes` already models `elevenlabs_voice_id`; seeding it as a
+  runtime store is a Docker/CI follow-on.
+- **Gotchas (one-line rules, Q4)**: env-key doc drift is real — the code built
+  `ELEVENLABS_VOICE_ID_{CODE.upper()}` the whole time while .env.example
+  shipped the full-name form (`_HINDI` etc.), so documented per-language
+  overrides never fired; guard with a `TTS_VOICE_ENV_KEYS` catalog + a
+  ".env.example documents all five keys" coverage test (mirror the Q8
+  channel-key test). The `is`-identity dedupe tests pass ONLY when consumers do
+  `from app.services.languages import SUPPORTED_LANGUAGES` (a direct import —
+  `import app.services.languages as l; l.SUPPORTED_LANGUAGES` is a different
+  expression but same object; either re-exports the same tuple).
+- **Next**: answer G6-Q2 (consent/DPDP) / Q9 (KPIs) / Q10 (deploy topology) →
+  live provider round-trips behind CI secrets → run the ci.yml stack job on a
+  Docker host → merge branch tips to main.
