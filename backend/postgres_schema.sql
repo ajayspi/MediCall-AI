@@ -74,6 +74,7 @@ CREATE TABLE calls (
     appointment_scheduled BOOLEAN DEFAULT FALSE,
     appointment_id UUID REFERENCES appointments(id) ON DELETE SET NULL,
     escalated_to_human BOOLEAN DEFAULT FALSE,
+    recording_consent TEXT NOT NULL DEFAULT 'unknown', -- DPDP (G6-Q2 Q1=A1): unknown / granted / denied
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -188,6 +189,28 @@ CREATE TABLE notifications (
     sent_at TIMESTAMPTZ
 );
 
+-- Compliance events (spec-dpdp-q2.md G6-Q2 Q3=A1): DPDP breach + consent
+-- lifecycle + data-subject-request records — the operational part of the
+-- 72-hr breach flow. notification_deadline = detected_at +
+-- DPDP_BREACH_NOTIFICATION_HOURS (default 72h), computed at insert by
+-- compliance.breach_notification_deadline; status: open / reported / closed
+-- (transition -> reported stamps reported_at). The actual DPB/affected-user
+-- alert is an operational follow-on (Q8 email channel), NOT a notification
+-- kind.
+CREATE TABLE compliance_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    clinic_id UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL, -- data_breach, consent_withdrawal, gdpr_request
+    severity TEXT DEFAULT 'medium', -- low, medium, high, critical
+    status TEXT DEFAULT 'open', -- open, reported, closed
+    description TEXT,
+    detected_at TIMESTAMPTZ DEFAULT NOW(),
+    notification_deadline TIMESTAMPTZ NOT NULL,
+    reported_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Indexes for call center performance (critical for high-concurrency workload)
 CREATE INDEX idx_calls_clinic ON calls(clinic_id);
 CREATE INDEX idx_calls_state ON calls(state);
@@ -204,6 +227,7 @@ CREATE INDEX idx_users_role ON users(role) WHERE is_active = TRUE;
 CREATE INDEX idx_call_embeddings_call ON call_embeddings(call_id);
 CREATE INDEX idx_payments_clinic_status ON payments(clinic_id, status);
 CREATE INDEX idx_notifications_clinic_status ON notifications(clinic_id, status);
+CREATE INDEX idx_compliance_clinic_status ON compliance_events(clinic_id, status);
 
 -- Webhook idempotency (spec-payments.md Q4/A4a): at most one intent per
 -- gateway reference, so a replayed gateway webhook updates the same row.
@@ -361,12 +385,17 @@ ALTER TABLE calls ENABLE ROW LEVEL SECURITY;
 ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE prescriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE compliance_events ENABLE ROW LEVEL SECURITY;
 
 -- FORCE the flip (spec-auth-enforcement.md): the owner (medicall) must not
 -- bypass RLS once the runtime connects as medicall_app; FORCE makes the
--- policies binding for EVERY role, including the table owner. These 7 tenant
--- tables are the only RLS-enabled ones (language_codes is read-only reference
--- data and deliberately left out).
+-- policies binding for EVERY role, including the table owner. These 9 tenant
+-- tables are the only RLS-enabled ones (notifications was added G6-Q2 — its
+-- notifications_send policy predates it but was inert without ENABLE;
+-- compliance_events is the new DPDP event table; language_codes is read-only
+-- reference data and deliberately left out, as are call_embeddings/
+-- call_sessions which carry no direct clinic-scope policy this phase).
 ALTER TABLE users FORCE ROW LEVEL SECURITY;
 ALTER TABLE clinics FORCE ROW LEVEL SECURITY;
 ALTER TABLE clinic_users FORCE ROW LEVEL SECURITY;
@@ -374,6 +403,8 @@ ALTER TABLE calls FORCE ROW LEVEL SECURITY;
 ALTER TABLE appointments FORCE ROW LEVEL SECURITY;
 ALTER TABLE prescriptions FORCE ROW LEVEL SECURITY;
 ALTER TABLE payments FORCE ROW LEVEL SECURITY;
+ALTER TABLE notifications FORCE ROW LEVEL SECURITY;
+ALTER TABLE compliance_events FORCE ROW LEVEL SECURITY;
 
 -- Clinic owners see their own clinic data
 CREATE POLICY clinic_own_data ON clinics
@@ -470,6 +501,18 @@ CREATE POLICY notifications_send ON notifications
         OR current_setting('app.service_request', true) = 'on'
     );
 
+-- Compliance events (spec-dpdp-q2.md G6-Q2 Q3=A1): clinic staff read/record
+-- events for their clinic; server-side writes (the consent endpoint's
+-- withdrawal audit, future automation) pass through the service bypass —
+-- mirrors notifications_send / payments_manage.
+CREATE POLICY compliance_manage ON compliance_events
+    FOR ALL USING (
+        clinic_id IN (
+            SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
+        )
+        OR current_setting('app.service_request', true) = 'on'
+    );
+
 -- Clinic memberships: users read their own rows; a clinic owner reads their
 -- clinic's rows; ONLY the server-side service path may INSERT them this phase
 -- (create_clinic assigns the creator's owner row; the future staff-add
@@ -508,6 +551,7 @@ GRANT ALL ON appointments TO authenticated;
 GRANT ALL ON prescriptions TO authenticated;
 GRANT ALL ON payments TO authenticated;
 GRANT ALL ON notifications TO authenticated;
+GRANT ALL ON compliance_events TO authenticated;
 GRANT USAGE, SELECT ON sequence language_codes_id_seq TO authenticated;
 
 -- Grant permissions for the API runtime role (medicall_app) — identical surface
@@ -521,6 +565,7 @@ GRANT ALL ON appointments TO medicall_app;
 GRANT ALL ON prescriptions TO medicall_app;
 GRANT ALL ON payments TO medicall_app;
 GRANT ALL ON notifications TO medicall_app;
+GRANT ALL ON compliance_events TO medicall_app;
 GRANT SELECT ON language_codes TO medicall_app;
 GRANT USAGE, SELECT ON sequence language_codes_id_seq TO medicall_app;
 

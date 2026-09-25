@@ -10,9 +10,10 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.auth import get_current_user
-from app.db.postgres import get_call, list_calls, update_call_state
+from app.db.postgres import get_call, list_calls, update_call_consent, update_call_state
 from app.models.call import STATE_TRANSITIONS, CallState, TriageSeverity
-from app.schemas.call import CallStateUpdate
+from app.schemas.call import CallStateUpdate, ConsentUpdate
+from app.services.consent import RECORDING_CONSENT_STATES
 
 router = APIRouter(prefix="/api/calls", tags=["calls"])
 
@@ -42,6 +43,7 @@ def call_row(c) -> dict:
         "appointment_scheduled": c.appointment_scheduled,
         "appointment_id": str(c.appointment_id) if c.appointment_id else None,
         "escalated_to_human": c.escalated_to_human,
+        "recording_consent": c.recording_consent,
     }
 
 
@@ -133,6 +135,31 @@ async def update_call_state_ep(
     if not ok:
         raise HTTPException(status_code=404, detail="call not found")
     return {"call_id": str(cid), "state": new_state.value, "updated": ok}
+
+
+@router.post("/{call_id}/consent")
+async def update_call_consent_ep(
+    call_id: str, data: ConsentUpdate, user=Depends(get_current_user)
+):
+    """Set the DPDP per-call recording-consent flag (spec-dpdp-q2.md).
+
+    granted/denied are the in-call capture outcomes; denied revokes (the
+    egress gate blocks future processing). The consent withdrawal audit row
+    is the compliance_events follow-on. Rides the existing calls RLS.
+    """
+    if data.consent not in RECORDING_CONSENT_STATES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"invalid consent: {data.consent} (unknown/granted/denied)",
+        )
+    cid = _uuid(call_id, "call_id")
+    row = await get_call(cid)
+    if row is None:
+        raise HTTPException(status_code=404, detail="call not found")
+    ok = await update_call_consent(cid, data.consent)
+    if not ok:
+        raise HTTPException(status_code=404, detail="call not found")
+    return {"call_id": str(cid), "recording_consent": data.consent, "updated": ok}
 
 
 @router.get("/{call_id}/transcript")

@@ -70,7 +70,7 @@ NEW_CRUD_HELPERS = (
     "update_payment_status",
 )
 
-ROUTER_MODULES = ("clinics", "calls", "appointments", "prescriptions", "payments", "notifications")
+ROUTER_MODULES = ("clinics", "calls", "appointments", "prescriptions", "payments", "notifications", "compliance")
 SCHEMA_MODULES = ("clinic", "call", "appointment", "prescription", "payment")
 
 EXPECTED_ENDPOINTS = {
@@ -85,6 +85,7 @@ EXPECTED_ENDPOINTS = {
         ("get", "/{call_id}"),
         ("patch", "/{call_id}/state"),
         ("get", "/{call_id}/transcript"),
+        ("post", "/{call_id}/consent"),
     },
     "appointments": {
         ("get", ""),
@@ -108,6 +109,11 @@ EXPECTED_ENDPOINTS = {
     "notifications": {
         ("get", ""),
         ("post", "/send"),
+    },
+    "compliance": {
+        ("get", ""),
+        ("post", "/events"),
+        ("patch", "/events/{event_id}"),
     },
 }
 
@@ -255,8 +261,9 @@ def included_router_attrs(tree) -> set:
 
 
 class TestMainApp(unittest.TestCase):
-    def test_main_registers_all_eight_routers(self):
-        """G6-Q1 added auth; G6-Q8 added the notifications router (eighth)."""
+    def test_main_registers_all_nine_routers(self):
+        """G6-Q1 added auth; G6-Q8 added notifications (eighth); G6-Q2 added
+        compliance (ninth, spec-dpdp-q2.md)."""
         tree = py_tree(MAIN)
         included = included_router_attrs(tree)
         self.assertEqual(
@@ -269,9 +276,10 @@ class TestMainApp(unittest.TestCase):
                 "prescriptions",
                 "payments",
                 "notifications",
+                "compliance",
             },
             included,
-            f"main.py must include_router all 8; got {sorted(included)}",
+            f"main.py must include_router all 9; got {sorted(included)}",
         )
 
     def test_main_voice_keeps_api_voice_prefix(self):

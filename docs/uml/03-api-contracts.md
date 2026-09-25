@@ -14,14 +14,16 @@ flowchart LR
     Auth["/api/auth<br/>POST /api/auth/register<br/>POST /api/auth/login<br/>POST /api/auth/otp/request<br/>POST /api/auth/otp/verify<br/>GET /api/auth/me (Bearer)<br/>POST /api/auth/logout<br/>GET /api/auth/providers<br/>POST /api/auth/oauth/{provider}<br/>SSO = 501 until env keys (google / microsoft / abha)"]
     Voice["/api/voice (prefix applied in main.py)<br/>POST /webhook/exotel<br/>POST /webhook/knowlarity<br/>POST /webhook/twilio<br/>POST /livekit-agent-start<br/>POST /call-completed"]
     Clinics["/api/clinics<br/>GET /api/clinics<br/>POST /api/clinics<br/>GET /api/clinics/{clinic_id}<br/>PATCH /api/clinics/{clinic_id}"]
-    Calls["/api/calls<br/>GET /api/calls (filters: state, language, severity, from, to, limit, offset)<br/>GET /api/calls/{call_id}<br/>PATCH /api/calls/{call_id}/state<br/>GET /api/calls/{call_id}/transcript"]
+    Calls["/api/calls<br/>GET /api/calls (filters: state, language, severity, from, to, limit, offset)<br/>GET /api/calls/{call_id}<br/>PATCH /api/calls/{call_id}/state<br/>GET /api/calls/{call_id}/transcript<br/>POST /api/calls/{call_id}/consent"]
     Appointments["/api/appointments<br/>GET /api/appointments<br/>POST /api/appointments<br/>GET /api/appointments/{appointment_id}<br/>PATCH /api/appointments/{appointment_id}/status"]
     Prescriptions["/api/prescriptions<br/>GET /api/prescriptions<br/>POST /api/prescriptions<br/>GET /api/prescriptions/{prescription_id}<br/>PATCH /api/prescriptions/{prescription_id}/status"]
     Payments["/api/payments<br/>GET /api/payments<br/>POST /api/payments<br/>GET /api/payments/{payment_id}<br/>PATCH /api/payments/{payment_id}/status<br/>POST /api/payments/webhook"]
     Notifications["/api/notifications<br/>GET /api/notifications<br/>POST /api/notifications/send"]
+    Compliance["/api/compliance<br/>GET /api/compliance (filters: clinic_id, status)<br/>POST /api/compliance/events<br/>PATCH /api/compliance/events/{event_id}"]
 
     StateGuard["PATCH /api/calls/{call_id}/state<br/>409 on invalid transition (STATE_TRANSITIONS)"]
     StatusGuard["PATCH .../status (appointment / prescription / payment)<br/>422 on invalid status value"]
+    ConsentGuard["POST /api/calls/{id}/consent<br/>422 on non unknown/granted/denied<br/>compliance_events deadline = detected_at + 72h (DPDP)"]
     NotFound["All {id} lookups<br/>404 on missing row"]
 ```
 
@@ -72,3 +74,15 @@ flowchart LR
   leg to the caller's phone — a recorded, non-fatal side effect that never
   fails a payment. Rows land in the `notifications` table under the
   `notifications_send` policy (membership OR `app.service_request` bypass).
+- **Compliance (G6-Q2 wired, spec-dpdp-q2.md): DPDP consent + 72-hr breach
+  flow + retention.** `POST /api/calls/{call_id}/consent` sets the per-call
+  recording-consent flag (unknown/granted/denied, 422 otherwise) riding the
+  existing calls RLS; the in-call capture helper is `services/consent.py`
+  (`parse_consent_response` for all 5 languages, `recording_allowed` is the
+  LiveKit egress gate). `POST /api/compliance/events` stores data_breach /
+  consent_withdrawal / gdpr_request rows with their computed
+  `notification_deadline` (= detected_at + 72h); PATCH moves status
+  open → reported → closed. The actual DPB/affected-user alert is an
+  operational follow-on (Q8 email channel). Retention per kind
+  (`services/retention.py`, env-overridable) is enforced by
+  `postgres.purge_expired` from the Docker/CI cron.

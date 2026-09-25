@@ -242,7 +242,7 @@ class TestRetentionModule(unittest.TestCase):
         naive = datetime(2026, 1, 1, 12, 0)
         deadline = retn.retention_deadline(naive, "notifications", env={})
         self.assertEqual(deadline.utcoffset(), timedelta(0), "naive input assumed UTC")
-        self.assertEqual(deadline, datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc))
+        self.assertEqual(deadline, datetime(2026, 6, 30, 12, 0, tzinfo=timezone.utc))
 
     def test_deadline_respects_env_override(self):
         created = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)

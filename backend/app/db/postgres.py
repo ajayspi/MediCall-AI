@@ -19,6 +19,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from app.models.call import CallState, TriageSeverity
+from app.services.compliance import breach_notification_deadline
+from app.services.retention import retention_deadline
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
@@ -29,6 +31,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    delete,
     event,
     insert,
     select,
@@ -294,6 +297,8 @@ class Call(Base):
         UUID(as_uuid=True), ForeignKey("appointments.id"), nullable=True
     )
     escalated_to_human: Mapped[bool] = mapped_column(Boolean, default=False)
+    # DPDP (G6-Q2 Q1=A1): unknown / granted / denied — the egress gate reads it.
+    recording_consent: Mapped[str] = mapped_column(String(10), default="unknown")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_tz
     )
@@ -568,6 +573,49 @@ class Notification(Base):
         )
 
 
+class ComplianceEvent(Base):
+    """DPDP compliance event record (spec-dpdp-q2.md G6-Q2 Q3=A1)."""
+
+    __tablename__ = "compliance_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("clinics.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # data_breach, consent_withdrawal, gdpr_request
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    # low, medium, high, critical
+    severity: Mapped[str] = mapped_column(String(20), default="medium")
+    # open, reported, closed
+    status: Mapped[str] = mapped_column(String(20), default="open")
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz
+    )
+    # detected_at + DPDP_BREACH_NOTIFICATION_HOURS (72h default) — computed at
+    # insert via compliance.breach_notification_deadline.
+    notification_deadline: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    reported_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz, onupdate=now_tz
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ComplianceEvent id={self.id} clinic={self.clinic_id} "
+            f"type={self.event_type} {self.status}>"
+        )
+
+
 # ─── Session Management ────────────────────────────────────────────────────
 
 
@@ -777,6 +825,25 @@ async def update_call_transcript(
                 duration_seconds=duration_seconds,
                 updated_at=now_tz(),
             )
+            .returning(Call.id)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one_or_none() is not None
+
+
+async def update_call_consent(call_id: uuid.UUID, consent: str) -> bool:
+    """Set the per-call recording-consent flag (G6-Q2 Q1=A1).
+
+    Values: unknown / granted / denied (validated at the API layer against
+    consent.RECORDING_CONSENT_STATES). Rides the calls RLS — clinic staff
+    write under membership, the in-call voice path under service_request.
+    """
+    async with SessionFactory() as session:
+        stmt = (
+            update(Call)
+            .where(Call.id == call_id)
+            .values(recording_consent=consent, updated_at=now_tz())
             .returning(Call.id)
         )
         result = await session.execute(stmt)
@@ -1061,6 +1128,109 @@ async def list_notifications(
         query = query.order_by(Notification.created_at.desc())
         result = await session.execute(query)
         return list(result.scalars().all())
+
+
+async def create_compliance_event(
+    clinic_id: uuid.UUID,
+    event_type: str,
+    severity: str = "medium",
+    description: Optional[str] = None,
+    detected_at: Optional[datetime] = None,
+) -> ComplianceEvent:
+    """Record a compliance event with its 72-hr DPDP breach deadline (G6-Q2).
+
+    notification_deadline = detected_at + DPDP_BREACH_NOTIFICATION_HOURS
+    (default 72h) via compliance.breach_notification_deadline — a bad/missing
+    env value cannot zero the deadline (falls back to 72).
+    """
+    detected = detected_at or now_tz()
+    async with SessionFactory() as session:
+        stmt = (
+            insert(ComplianceEvent)
+            .values(
+                clinic_id=clinic_id,
+                event_type=event_type,
+                severity=severity,
+                description=description,
+                detected_at=detected,
+                notification_deadline=breach_notification_deadline(detected),
+                status="open",
+            )
+            .returning(ComplianceEvent)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one()
+
+
+async def list_compliance_events(
+    clinic_id: uuid.UUID, status: Optional[str] = None
+) -> list[ComplianceEvent]:
+    """List compliance events for a clinic, newest first, optional status."""
+    async with SessionFactory() as session:
+        query = select(ComplianceEvent).where(
+            ComplianceEvent.clinic_id == clinic_id
+        )
+        if status:
+            query = query.where(ComplianceEvent.status == status)
+        query = query.order_by(ComplianceEvent.detected_at.desc())
+        result = await session.execute(query)
+        return list(result.scalars().all())
+
+
+async def update_compliance_event(
+    event_id: uuid.UUID,
+    status: Optional[str] = None,
+    severity: Optional[str] = None,
+) -> bool:
+    """Update status/severity; status='reported' stamps reported_at (never
+    un-stamps it on a later 'closed' transition)."""
+    values: dict[str, Any] = {}
+    if status is not None:
+        values["status"] = status
+        if status == "reported":
+            values["reported_at"] = now_tz()
+    if severity is not None:
+        values["severity"] = severity
+    if not values:
+        return False
+    values["updated_at"] = now_tz()
+    async with SessionFactory() as session:
+        stmt = (
+            update(ComplianceEvent)
+            .where(ComplianceEvent.id == event_id)
+            .values(**values)
+            .returning(ComplianceEvent.id)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one_or_none() is not None
+
+
+async def purge_expired(
+    kind: str, env: Optional[dict] = None, now: Optional[datetime] = None
+) -> int:
+    """Delete rows past their retention deadline (G6-Q2 Q2=A1).
+
+    Driven by the Docker/CI scheduler cron — NEVER auto-runs on this PC.
+    `calls` purge cascade-deletes call_embeddings via FK; the audit category
+    (`audit`, 6 yr) covers compliance_events; `recordings` are external
+    MinIO/S3 objects (LiveKit egress) with no row here — their purge is a
+    Docker follow-on. Returns the number of rows deleted.
+    """
+    cutoff = retention_deadline(now_tz() if now is None else now, kind, env=env)
+    model = {
+        "calls": Call,
+        "notifications": Notification,
+        "audit": ComplianceEvent,
+    }.get(kind)
+    if model is None:
+        return 0
+    async with SessionFactory() as session:
+        stmt = delete(model).where(model.created_at < cutoff)
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.rowcount if result.rowcount is not None else 0
 
 
 async def log_call_embedding(

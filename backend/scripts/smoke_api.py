@@ -293,6 +293,57 @@ def main() -> int:
         )
         check("POST /api/notifications/send without keys -> 501", s == 501, f"(got {s})")
 
+    # --- compliance: DPDP event lifecycle + consent route (G6-Q2) -----------
+    s, ev = request(
+        "POST", "/api/compliance/events",
+        {
+            "clinic_id": clinic_id,
+            "event_type": "data_breach",
+            "severity": "high",
+            "description": "Smoke: DB backup file briefly exposed (demo tenant).",
+        },
+        headers=auth,
+    )
+    check("POST /api/compliance/events -> 201 + 72h deadline",
+          s == 201 and ev and ev.get("notification_deadline"), f"(got {s})")
+
+    s, _ = request(
+        "POST", "/api/compliance/events",
+        {"clinic_id": clinic_id, "event_type": "nonsense"},
+        headers=auth,
+    )
+    check("POST /api/compliance/events bad type -> 422", s == 422, f"(got {s})")
+
+    s, lst = request(
+        "GET", f"/api/compliance/events?clinic_id={clinic_id}", headers=auth,
+    )
+    check("GET /api/compliance/events -> 200 list", s == 200 and isinstance(lst, list) and lst, f"(got {s})")
+
+    s, _ = request(
+        "GET", f"/api/compliance/events?clinic_id={clinic_id}&status=open", headers=auth,
+    )
+    check("GET /api/compliance/events?status=open -> 200", s == 200, f"(got {s})")
+
+    s, _ = request(
+        "PATCH", f"/api/compliance/events/{ev.get('id')}", {"status": "reported"},
+        headers=auth,
+    ) if ev and ev.get("id") else (0, {})
+    check("PATCH /api/compliance/events status -> 200", s == 200, f"(got {s})")
+
+    # Consent route rides calls RLS: a random call id proves the identity-gated
+    # route (404) + the 422 validation — the in-call capture is the voice path.
+    s, _ = request(
+        "POST", f"/api/calls/{uuid.uuid4()}/consent", {"consent": "granted"},
+        headers=auth,
+    )
+    check("POST /api/calls/{id}/consent unknown call -> 404", s == 404, f"(got {s})")
+
+    s, _ = request(
+        "POST", f"/api/calls/{uuid.uuid4()}/consent", {"consent": "maybe"},
+        headers=auth,
+    )
+    check("POST /api/calls/{id}/consent invalid value -> 422", s == 422, f"(got {s})")
+
     # --- voice: call-completed needs the service token (enforcement) ---------
     s, j = request(
         "POST",
