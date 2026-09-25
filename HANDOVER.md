@@ -219,6 +219,26 @@ is the launchpad.
   `f553df2` — spec lands with the suite; 31 tests 11 FAIL+19 ERROR → feat
   `763ae22` → docs tip). Proof: `tests/test_kpis_q9.py` 31/31 GREEN;
   regression **519/519**; compileall 0.
+- ✅ **DEPLOY TOPOLOGY (G6-Q10) DONE** — last open G6 question answered
+  (sign-off 2026-09-25, question tool; research-grounded: Railway has NO Mumbai
+  region as of 2026-09-25 — 4 Metal regions only, Pro-plan region select; its
+  config-as-code is DEPRECATED to 2026-12-01), Q1=A1 (drop redis from the
+  compose stack: the client had ZERO callers — service/volume/REDIS_URL
+  removed; redis.py + pip pin kept as a documented future-cache stub), Q2=A1
+  (single root-context `backend/Dockerfile` — `COPY backend/…` — so docker
+  compose (`context: .`) and Railway share one file; root + frontend
+  .dockerignore added), Q3=A2 (region pin realization: frontend Vercel
+  `bom1`/Mumbai (vercel.json) + backend/Postgres Railway `asia-southeast1`
+  **nearest available**; `DATA_RESIDENCY_REGION=in` documented posture, pinned
+  in compose, + zero-retention BAAs as the contractual note), Q4=A3 (full:
+  compose DPDP block + `DATABASE_URL` `+asyncpg` scheme fix,
+  `scripts/purge_expired.py` + `.github/workflows/purge.yml` daily 03:00 UTC
+  — closes Q2's deferred purge — `docs/DEPLOYMENT.md` complete env catalog,
+  schema-valid `railway.json` region pin). Branch `g-deploy` off `g-kpis` tip
+  `5cd178c` (spec `ac9c571` APPROVED → RED same commit — 42 tests 40 FAIL →
+  feat `1f1411c` → docs tip). Proof: `tests/test_deploy_q10.py` 42/42 GREEN;
+  regression **561/561** (519 + 42); compileall 0. **G6 fully answered**;
+  test_uml_diagrams deployment contract updated (redis/6379 → 3-service stack).
 - ▶️ **NEXT: live provider round-trips behind CI secrets** (Deepgram/
   ElevenLabs/OpenAI + LiveKit rooms + real gateway SDK dispatch + signed
   webhook end-to-end) and **run the ci.yml stack job on a Docker host** (RLS/
@@ -238,15 +258,20 @@ is the launchpad.
 - DPDP (G6-Q2): per-call recording consent flag on `calls`
   (unknown/granted/denied); retention 365/365/180/2190 days (env-overridable,
   purge from the Docker/CI cron); 72-hr breach record + computed deadline on
-  `compliance_events`; data residency posture "in" + DPO env — the actual
-  region pin is Q10's job.
+  `compliance_events`; data residency posture "in" + DPO env — region pin
+  realized in G6-Q10 (frontend Vercel bom1/Mumbai, backend+DB Railway
+  asia-southeast1 nearest-available, zero-retention BAA notes; compose pins
+  DATA_RESIDENCY_REGION=in).
 - Analytics (G6-Q9): 7 MVP KPIs (volume, resolution, triage mix, language
   dist, no-show, revenue, notification delivery success — see
   spec-kpis-q9.md); per-KPI endpoints under /api/analytics; pure computed
   (no KPI tables, no caching); market benchmarks are display-only constants.
 
 ## 4. Still open (answer before the session that needs them)
-G6-Q10 deploy topology. (Q2 consent/DPDP → DONE on `g-dpdp`; Q9 KPIs → DONE on `g-kpis`.)
+None — G6 (idea refinement gap audit) is fully answered: all 10 questions DONE
+(branches g-auth … g-kpis, g-deploy). Next work: live provider round-trips
+behind CI secrets, run the ci.yml stack job on a Docker host, then merge
+branch tips to main.
 
 ## 5. Verify first (before any edit)
 ```
@@ -269,6 +294,7 @@ tree — keep it clean; each phase gets its own `.worktrees\<name>` branch via
 - `spec-languages-q4.md` — G6-Q4 language layer: STT confidence fallback, single-source catalog, greetings, TTS voice keys (Q1–Q4 APPROVED; DONE)
 - `spec-dpdp-q2.md` — G6-Q2 consent + DPDP: per-call recording consent, retention policy, 72-hr breach flow, data localization + DPO (Q1–Q4 APPROVED; DONE)
 - `spec-kpis-q9.md` — G6-Q9 MVP KPIs + analytics: 7 per-KPI endpoints + market benchmarks (Q1=A3 Q2=A2 Q3=A1 Q4=A1; DONE)
+- `spec-deploy-q10.md` — G6-Q10 deploy topology: compose service list, Railway/Vercel region pin, env var catalog, purge schedule (Q1=A1 Q2=A1 Q3=A2 Q4=A3; DONE)
 - `spec-guardrails-q3.md` — G6-Q3 clinical guardrails (Q1–Q4 APPROVED; DONE)
 - `spec-docker-ci.md` — Docker/CI phase spec (Q1 local+CI, Q2 client+2 pages, Q3 3-job workflow; DONE)
 - `spec-auth.md` — AuthN/Z (G6-Q1) + local-schema repair (Q1–Q4 APPROVED; DONE)

@@ -768,6 +768,60 @@ Not specified anywhere yet, each needs a decision before build:
   Q2: a new router grows the test_api_routes contract (ROUTER_MODULES +
   EXPECTED_ENDPOINTS + N-routers test) in the SAME commit as the router,
   or the full-regression gate goes red.
-- **Next**: answer G6-Q10 (deploy topology) →
-  live provider round-trips behind CI secrets → run the ci.yml stack job on a
-  Docker host → merge branch tips to main.
+- **G6-Q10 DEPLOY TOPOLOGY DONE (g-deploy, off g-kpis tip `5cd178c`; spec
+  `ac9c571` APPROVED → RED same commit (spec lands with the suite) — 42 tests
+  40 FAIL → feat `1f1411c` → docs tip; regression **561/561** (519 + 42),
+  compileall 0)** — sign-off (2026-09-25, question tool; research-grounded:
+  Railway has NO Mumbai region as of 2026-09-25 — 4 Metal regions only
+  (us-west2 / us-east4-eqdc4a / europe-west4-drams3a / asia-southeast1-eqsg3a),
+  region select is Pro-plan only, and its config-as-code is DEPRECATED —
+  legacy services to 2026-12-01; Vercel `bom1`/Mumbai was ALREADY pinned in
+  vercel.json) Q1=A1 (**drop redis from the compose stack**: grep
+  `init_redis|get_redis|import redis` across backend → ZERO callers and the
+  compose `REDIS_URL` was read by nobody; removed the redis service, redis-data
+  volume + REDIS_URL from compose/05-deployment/.env.example; kept
+  `app/db/redis.py` + the `redis==5.0.1` pin as a documented future-cache stub
+  with `UPSTASH_REDIS_REST_URL`/`_TOKEN` matching what it actually reads),
+  Q2=A1 (**single root-context Dockerfile**: `COPY backend/requirements.txt
+  ./requirements.txt` + `COPY backend/ ./` + compose `context: .` +
+  `dockerfile: backend/Dockerfile` + root `.dockerignore` (+
+  `frontend/.dockerignore`) so ONE file serves docker compose AND Railway —
+  railway.toml's `dockerfilePath` builds from the repo root, so the old
+  subdir-context COPYs would have failed on Railway), Q3=A2 (**region pin
+  realization**: frontend Vercel `bom1`/Mumbai + backend/Postgres Railway
+  `asia-southeast1` **nearest available** (Singapore — Railway cannot do
+  in-country); `DATA_RESIDENCY_REGION=in` is the documented posture PINNED
+  unconditionally in compose + default in railway.toml/.env.example, with
+  zero-retention BAAs documented as the contractual note in docs/DEPLOYMENT.md),
+  Q4=A3 (**full phase**): compose DPDP env block (`DATA_RESIDENCY_REGION=in` +
+  `RETENTION_*_DAYS` + `DPDP_BREACH_NOTIFICATION_HOURS` + `DPO_NAME/EMAIL`),
+  `DATABASE_URL` **`+asyncpg` scheme fix** (compose passed `postgresql://…` —
+  create_async_engine would have rejected it at stack runtime; the never-run
+  ci.yml stack job was going to catch this), `backend/scripts/purge_expired.py`
+  one-shot runner (iterates `retention_categories`, calls `purge_expired` per
+  kind; recordings = external objects noted) + `.github/workflows/purge.yml`
+  scheduled daily 03:00 UTC + workflow_dispatch (closes Q2's deferred
+  "Docker/CI cron"), `docs/DEPLOYMENT.md` (runbook + **complete env var
+  catalog** — every `backend/.env.example` key, grouped, with secret flags +
+  region pin + Railway/Vercel steps), schema-valid `railway.json`
+  (deploy.region asia-southeast1; NO top-level services array — the schema
+  doesn't support it, Postgres plugin + secrets are dashboard-side), railway.toml
+  `[deploy] region` + DPDP `[env]` defaults. Contract updates: test_uml_diagrams
+  DEPLOYMENT_TOKENS (redis removed) + ports (6379 dropped) — the deployment
+  contract intentionally changed. Baseline moved 519 → 561.
+- **Gotchas (one-line rules, Q10)**: `py -3.14 -m unittest` default discovery
+  finds 0 tests (`backend/tests` has no `__init__.py`) — the real command is
+  `py -3.14 -m unittest discover -s tests -p "test_*.py"`. The compose backend
+  `DATABASE_URL` lacked the `+asyncpg` scheme (async engine rejects non-async
+  schemes at runtime — the stack job would have failed; the Q10 RED suite
+  text-pins the fixed scheme). Railway deploys need root-context COPYs — a
+  `railway.toml` dockerfilePath builds from the repo ROOT, so `COPY
+  requirements.txt .` (subdir context) fails there while working under compose's
+  `./backend` context; the single root-context Dockerfile + `context: .`
+  resolves both. The master repo shows `?? .worktrees/` untracked (missing from
+  .gitignore AND .git/info/exclude) — added `.worktrees/` to .gitignore. A
+  phase that changes the documented stack must update the contract suite in the
+  same commit (test_uml_diagrams redis token + 6379 port) or the
+  full-regression gate goes red.
+- **Next**: live provider round-trips behind CI secrets → run the ci.yml stack
+  job on a Docker host → merge branch tips to main (G6 fully answered).

@@ -9,6 +9,7 @@ var list. Also close the Q2-deferred retention-purge schedule ("Docker/CI cron")
 
 ## §0 Sign-off Record (2026-09-25, question tool — all four answered)
 
+| **Status** | DRAFT → APPROVED (signed off 2026-09-25, question tool, Q1=A1 Q2=A1 Q3=A2 Q4=A3) → **GREEN** (implemented 2026-09-25; regression **561/561** = 519 + 42, compileall 0; RED `ac9c571` → feat `1f1411c` → docs) | |
 | Q | Choice | Meaning |
 |---|--------|---------|
 | Q1 | **A1 — Drop redis from compose** | Remove the `redis` service, `redis-data` volume, and `REDIS_URL` from docker-compose.yml + 05-deployment; keep `backend/app/db/redis.py` and the `redis==5.0.1` pin as a documented future-cache stub (zero callers today). Stack = postgres+pgvector, backend, frontend. |
