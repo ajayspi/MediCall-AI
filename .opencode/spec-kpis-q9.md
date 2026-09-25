@@ -5,7 +5,7 @@
 | **Phase** | G6-Q9: analytics — which KPIs are MVP, computed from existing tables (calls/appointments/payments) behind one identity-gated endpoint |
 | **Tracker question** | "Analytics: which KPIs are MVP (call volume, triage mix, language dist, no-show, revenue)?" |
 | **Branch** | `g-kpis` off `g-dpdp` tip `684a8ab` |
-| **Status** | DRAFT (pending sign-off, question tool) |
+| **Status** | DRAFT → APPROVED (signed off 2026-09-25, question tool, Q1=A3 Q2=A2 Q3=A1 Q4=A1) → **GREEN** (implemented 2026-09-25; regression 519/519, compileall 0) |
 | **Date** | 2026-09-25 |
 
 ## 0. Sign-off record (2026-09-25, question tool)
@@ -138,6 +138,27 @@ GET /api/analytics?clinic_id={uuid}&from=2026-08-26&to=2026-09-25   (identity-ga
    `py -3.14 -m compileall -q app scripts tests main.py` → exit 0.
 3. Docs: tracker + HANDOVER + spec §7 GREEN; re-run full suite → count unchanged.
 
-## 7. Implementation record (pending)
+## 7. Implementation record (2026-09-25)
 
-- RED commit: — · feat commit: — · docs commit: —
+- RED commit: `f553df2` — spec DRAFT→APPROVED landed with the suite
+  (test_kpis_q9.py; 31 tests: 11 FAIL + 19 ERROR, exit 1).
+- feat commit: `763ae22` (8 files, 609+/7−):
+  - **services/analytics.py** (stdlib leaf, roots {datetime, collections,
+    typing}): `resolve_period` (defaults 30d / cap 366d / naive→UTC /
+    ValueError rules), `resolution_rate` (COMPLETE over the 4 terminal
+    states; PAYMENT_SENT excluded), `no_show_rate`, `success_rate`,
+    `shape_volume`, `shape_delivery`, `BENCHMARKS` (market context cards).
+  - **postgres.py**: `func` added to the sqlalchemy import; 7 per-KPI async
+    aggregates (compute_volume / resolution / triage / language / no_show /
+    revenue / delivery) — read-only rollups filtered clinic_id + window,
+    riding the existing RLS (pure computed, zero writes).
+  - **app/api/analytics.py** — **10th router**, prefix /api/analytics: one
+    GET per KPI (/volume /resolution /triage /language /no-show /revenue
+    /delivery) + /benchmarks (static market context, no period params); all
+    identity-gated; 422 on bad period. main.py registers it; test_api_routes
+    contract grown 9→10 routers.
+  - **smoke/docs**: smoke_api.py analytics checks (volume 200, benchmarks
+    200, bad range 422); 03-api-contracts.md Analytics node + PeriodGuard +
+    note + 10-router note; 01-er.md note (no new entities).
+- docs commit: — (this session, next)
+- Baseline moved 488 → 519 (31 new). 519/519 ALL PASS, compileall 0.

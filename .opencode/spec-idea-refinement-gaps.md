@@ -92,7 +92,7 @@ Not specified anywhere yet, each needs a decision before build:
 - **G6-Q1 Auth**: Full incl. ABHA login (OTP + password + Google/Microsoft SSO + ABHA).
 - **G6-Q6 Telephony**: Multiple fallback sources — wire Exotel + Knowlarity + Twilio India all with fallback chain, no single primary.
 - **G6-Q7 EHR/ABDM**: Transcript only for Phase 1 (no EHR writes; calls/appointments/prescriptions local only).
-- **G6-Q2/Q9/Q10**: Q2 (consent/DPDP) → **DONE on `g-dpdp`**; Q9 (KPIs) + Q10 (deploy topology) still open — answer before their respective build sessions. (Q3 guardrails → DONE `c01bbac`; Q5 payments → DONE `4812795`; Q8 notifications → DONE on `g-notify`; Q4 languages → DONE on `g-languages`.)
+- **G6-Q9/Q10**: Q9 (KPIs/analytics) → **DONE on `g-kpis`**; Q10 (deploy topology) still open — answer before its build session. (Q3 guardrails → DONE `c01bbac`; Q5 payments → DONE `4812795`; Q8 notifications → DONE on `g-notify`; Q4 languages → DONE on `g-languages`; Q2 consent/DPDP → DONE on `g-dpdp`.)
 - **Next**: fresh session, one task, starting with G1+G2 (make the app import: fix `main.py`, rewrite `postgres.py` so it parses).
 
 ## Implementation Record — G1+G2 DONE (2026-09-23)
@@ -734,6 +734,40 @@ Not specified anywhere yet, each needs a decision before build:
   the calls endpoint set. `endpoint_set`/`endpoint_paths` produce exact
   `(method, "/path")` tuples — a path-param spelling mismatch (`{event_id}`
   vs `{eventId}`) fails them.
-- **Next**: answer G6-Q9 (KPIs) / Q10 (deploy topology) →
+- **G6-Q9 MVP KPIs DONE (g-kpis, off g-dpdp tip `684a8ab`; spec `f553df2`
+  DRAFT→APPROVED → GREEN; RED `f553df2` lands spec+suite — 31 tests
+  11 FAIL+19 ERROR → feat `763ae22` → docs tip; regression **519/519**
+  (488 + 31), compileall 0)** — sign-off (2026-09-25, question tool,
+  market-grounded: Interactly 72% resolution benchmark, Hyro 2026 human-FCR
+  70-79%, India no-show 18-25% → voice-AI 8-12%, reminder confirmation
+  75-85%) Q1=A3 (**7 KPIs**: volume total/by_state/by_day/avg-duration +
+  resolution rate + triage mix + language dist + no-show rate + revenue
+  captured/refunded/by_kind/currency + **notification delivery success**
+  per kind sent/failed/total/rate + static `BENCHMARKS` context dict —
+  reminder *confirmation* rate deferred (needs campaign state)), Q2=A2
+  (**per-KPI endpoints**: `app/api/analytics.py` — 10th router, prefix
+  /api/analytics, one GET per KPI `/volume /resolution /triage /language
+  /no-show /revenue /delivery` + `/benchmarks`; handlers get_<kpi>_ep all
+  identity-gated; benchmarks handler is period-free), Q3=A1 (pure computed:
+  stdlib `services/analytics.py` leaf (roots ⊆ {datetime, collections,
+  typing}) with `resolve_period`/rates/shape helpers; `postgres.py` 7
+  read-only per-KPI aggregates (`func.count`/`func.sum` + group_by over
+  calls/appointments/payments/notifications) — zero schema writes, rides
+  existing RLS; no .env additions, benchmarks are code constants), Q4=A1
+  (optional ISO from/to, defaults to=now/from=to−30d, 366-day cap, 422 on
+  bad order/over-cap/unparseable, naive assumed UTC). Delivered: 2 new
+  modules + main.py 10th router + test_api_routes 9→10 + smoke_api
+  analytics checks + 03-api-contracts Analytics node/PeriodGuard/note +
+  01-er.md note. Baseline moved 488 → 519.
+- **Gotchas (one-line rules, Q9)**: period strings must be `str(value)`-safe —
+  the router passes `from_ or None` so empty query strings become defaults
+  (a raw `""` would 422). `func.date(TIMESTAMPTZ)` buckets by the DB session
+  timezone (documented MVP choice — a client-TZ bucketing fix is a Q10+
+  item). The `/benchmarks` handler must NOT take from/to (RED pins
+  `alias="from"` absent) — static context is period-free by design. As in
+  Q2: a new router grows the test_api_routes contract (ROUTER_MODULES +
+  EXPECTED_ENDPOINTS + N-routers test) in the SAME commit as the router,
+  or the full-regression gate goes red.
+- **Next**: answer G6-Q10 (deploy topology) →
   live provider round-trips behind CI secrets → run the ci.yml stack job on a
   Docker host → merge branch tips to main.

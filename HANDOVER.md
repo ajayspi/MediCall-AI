@@ -200,6 +200,25 @@ is the launchpad.
   `notifications_send` policy was inert (never ENABLEd) → notifications was
   cross-clinic readable; Q2 added it + compliance_events to the ENABLE+FORCE
   lists (see tracker).
+- ✅ **ANALYTICS (G6-Q9) DONE** — MVP KPIs + analytics (sign-off 2026-09-25,
+  question tool, market-grounded: Interactly 72% resolution, Hyro 2026 human
+  FCR 70-79%, India no-show 18-25% → voice-AI 8-12%, reminder confirmation
+  75-85%), Q1=A3 (**7 KPIs**: call volume total/by_state/by_day/avg duration,
+  resolution rate (COMPLETE over terminal; PAYMENT_SENT excluded as
+  in-progress), triage mix (green/amber/red/critical + untriaged), language
+  dist (hi/en/ta/te/bn + unknown), no-show rate (over terminal appointments),
+  revenue captured/refunded/by_kind/currency, **notification delivery success**
+  per kind + static `BENCHMARKS` context cards — confirmation rate deferred),
+  Q2=A2 (per-KPI endpoints: `app/api/analytics.py` — 10th router, GET per KPI
+  on /api/analytics + /benchmarks, all identity-gated), Q3=A1 (pure computed:
+  stdlib `services/analytics.py` leaf + 7 read-only postgres aggregates over
+  calls/appointments/payments/notifications — zero schema writes, rides
+  existing RLS), Q4=A1 (optional from/to defaulting to the last 30 days,
+  366-day cap, 422 on bad order/over-cap/unparseable, naive assumed UTC).
+  Branch `g-kpis` off `g-dpdp` tip `684a8ab` (spec `f553df2` APPROVED → RED
+  `f553df2` — spec lands with the suite; 31 tests 11 FAIL+19 ERROR → feat
+  `763ae22` → docs tip). Proof: `tests/test_kpis_q9.py` 31/31 GREEN;
+  regression **519/519**; compileall 0.
 - ▶️ **NEXT: live provider round-trips behind CI secrets** (Deepgram/
   ElevenLabs/OpenAI + LiveKit rooms + real gateway SDK dispatch + signed
   webhook end-to-end) and **run the ci.yml stack job on a Docker host** (RLS/
@@ -221,9 +240,13 @@ is the launchpad.
   purge from the Docker/CI cron); 72-hr breach record + computed deadline on
   `compliance_events`; data residency posture "in" + DPO env — the actual
   region pin is Q10's job.
+- Analytics (G6-Q9): 7 MVP KPIs (volume, resolution, triage mix, language
+  dist, no-show, revenue, notification delivery success — see
+  spec-kpis-q9.md); per-KPI endpoints under /api/analytics; pure computed
+  (no KPI tables, no caching); market benchmarks are display-only constants.
 
 ## 4. Still open (answer before the session that needs them)
-G6-Q9 MVP KPIs, G6-Q10 deploy topology. (Q2 consent/DPDP → DONE on `g-dpdp`.)
+G6-Q10 deploy topology. (Q2 consent/DPDP → DONE on `g-dpdp`; Q9 KPIs → DONE on `g-kpis`.)
 
 ## 5. Verify first (before any edit)
 ```
@@ -245,6 +268,7 @@ tree — keep it clean; each phase gets its own `.worktrees\<name>` branch via
 - `spec-notifications-q8.md` — G6-Q8 WhatsApp-first notifications (Q1–Q4 APPROVED; DONE)
 - `spec-languages-q4.md` — G6-Q4 language layer: STT confidence fallback, single-source catalog, greetings, TTS voice keys (Q1–Q4 APPROVED; DONE)
 - `spec-dpdp-q2.md` — G6-Q2 consent + DPDP: per-call recording consent, retention policy, 72-hr breach flow, data localization + DPO (Q1–Q4 APPROVED; DONE)
+- `spec-kpis-q9.md` — G6-Q9 MVP KPIs + analytics: 7 per-KPI endpoints + market benchmarks (Q1=A3 Q2=A2 Q3=A1 Q4=A1; DONE)
 - `spec-guardrails-q3.md` — G6-Q3 clinical guardrails (Q1–Q4 APPROVED; DONE)
 - `spec-docker-ci.md` — Docker/CI phase spec (Q1 local+CI, Q2 client+2 pages, Q3 3-job workflow; DONE)
 - `spec-auth.md` — AuthN/Z (G6-Q1) + local-schema repair (Q1–Q4 APPROVED; DONE)
