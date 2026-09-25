@@ -152,8 +152,10 @@ def now_tz() -> datetime:
 
 # ─── Enums (canonical definitions live in app.models.call) ────────────────
 
-# Supported caller/patient languages: Hindi, English, Tamil, Telugu, Bengali.
-SUPPORTED_LANGUAGES = ("hi", "en", "ta", "te", "bn")
+# Supported caller/patient languages (Hindi, English, Tamil, Telugu, Bengali):
+# single source = app/services/languages.py (G6-Q4 Q2=A1). This import makes
+# the same tuple object available to every consumer (no drift between copies).
+from app.services.languages import SUPPORTED_LANGUAGES
 
 
 # ─── Database Models ───────────────────────────────────────────────────────

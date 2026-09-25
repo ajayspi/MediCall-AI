@@ -4,6 +4,8 @@ from typing import AsyncGenerator, Optional
 
 import httpx
 
+from app.services.languages import TTS_VOICE_ENV_KEYS
+
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 DEFAULT_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
 BASE_URL = "https://api.elevenlabs.io/v1"
@@ -12,10 +14,13 @@ BASE_URL = "https://api.elevenlabs.io/v1"
 def voice_for_language(language: str, env: Optional[dict] = None) -> str:
     """Select the ElevenLabs voice for a language (env map -> generic -> default).
 
-    Env keys follow .env.example: ELEVENLABS_VOICE_ID_HI / _EN / _TA / _TE / _BN.
+    Canonical per-language keys come from the languages catalog (G6-Q4 Q4=A1):
+    ELEVENLABS_VOICE_ID_HI/_EN/_TA/_TE/_BN, with ELEVENLABS_VOICE_ID as the
+    generic fallback. The legacy _HINDI/_TAMIL/... names are gone from
+    .env.example (they never fired — the code always built the {CODE} form).
     """
     env = env or os.environ
-    key = f"ELEVENLABS_VOICE_ID_{str(language).upper()}"
+    key = TTS_VOICE_ENV_KEYS.get(language) or f"ELEVENLABS_VOICE_ID_{str(language).upper()}"
     return env.get(key) or env.get("ELEVENLABS_VOICE_ID") or DEFAULT_VOICE_ID
 
 

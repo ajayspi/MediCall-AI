@@ -10,13 +10,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.models.call import Call, CallState, TriageSeverity
 
-SUPPORTED_LANGUAGES = ("hi", "en", "ta", "te", "bn")
-
-# Deepgram STT tags per language (spec-micc-india)
-STT_TAGS = {"hi": "hi-IN", "en": "en-IN", "ta": "ta-IN", "te": "te-IN", "bn": "bn-IN"}
-
-# IVR DTMF digit -> language code (mirrors app.services.telephony)
-IVR_DIGIT_LANGUAGES = {"1": "hi", "2": "en", "3": "ta", "4": "te", "5": "bn"}
+# G6-Q4 (Q2=A1): the 5-language catalog is single-sourced in
+# app/services/languages.py. These names are re-exported so existing consumers
+# (telephony mirrors, G4 pins on agent_logic) keep working unchanged.
+from app.services.languages import (
+    IVR_DIGIT_LANGUAGES,
+    STT_TAGS,
+    SUPPORTED_LANGUAGES,
+)
 
 # Valid triage severities (never a diagnosis — flag only)
 SEVERITIES = {s.value for s in TriageSeverity}  # green, amber, red, critical
@@ -184,3 +185,26 @@ def language_for_room(metadata: Optional[Dict[str, Any]], default: str = "hi") -
         if mapped:
             return mapped
     return default
+
+
+# G6-Q4 (Q3=A1): per-language opening greeting — mirrors the guardrails
+# SAFE_REFUSALS shape (fixed text per language, English template as fallback).
+GREETING_TEMPLATES = {
+    "hi": "नमस्ते, {clinic} में आपका स्वागत है।",
+    "en": "Namaste, welcome to {clinic}.",
+    "ta": "வணக்கம், {clinic} க்கு வரவேற்கிறோம்।",
+    "te": "నమస్కారం, {clinic} కు స్వాగతం।",
+    "bn": "নমস্কার, {clinic} এ আপনাকে স্বাগতম।",
+}
+
+
+def greeting_for_language(language: Optional[str], clinic_name: str) -> str:
+    """Localized opening greeting; unknown/None language -> English template.
+
+    The TTS voice was already per-language (tts.voice_for_language); this makes
+    the *text* per-language too (previously the greeting was always English
+    words — livekit_agent emitted "Namaste, welcome to {clinic}." in every
+    language).
+    """
+    template = GREETING_TEMPLATES.get(language) if isinstance(language, str) else None
+    return (template or GREETING_TEMPLATES["en"]).format(clinic=clinic_name)

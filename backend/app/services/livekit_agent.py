@@ -54,10 +54,8 @@ async def entrypoint(ctx: JobContext):
     clinic_name = metadata.get("clinic_name", "MediCall AI")
     ai_instructions = metadata.get("ai_instructions", "")
 
-    greeting = (
-        f"Namaste, welcome to {clinic_name}. "
-        "Tell me briefly how we can help you today."
-    )
+    greeting = agent_logic.greeting_for_language(call.caller_language, clinic_name)
+    greeting = f"{greeting} Tell me briefly how we can help you today."
     async for chunk in tts_stream(greeting, language=call.caller_language):
         await ctx.room.local_participant.publish_audio(chunk)
 

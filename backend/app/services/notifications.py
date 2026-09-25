@@ -28,7 +28,9 @@ KINDS = (
     "otp",
     "payment_receipt",
 )
-SUPPORTED_LANGUAGES = ("hi", "en", "ta", "te", "bn")
+# 5-language tuple single-sourced in app/services/languages.py (G6-Q4 Q2=A1) —
+# re-exported here so app/api/notifications.py keeps its import working.
+from app.services.languages import SUPPORTED_LANGUAGES
 
 # Per-kind channel preference: the first READY channel in the tuple carries the
 # message; a failed send falls through to the next. WhatsApp first (Q1=A1c).
