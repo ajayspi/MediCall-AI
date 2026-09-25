@@ -20,10 +20,12 @@ flowchart LR
     Payments["/api/payments<br/>GET /api/payments<br/>POST /api/payments<br/>GET /api/payments/{payment_id}<br/>PATCH /api/payments/{payment_id}/status<br/>POST /api/payments/webhook"]
     Notifications["/api/notifications<br/>GET /api/notifications<br/>POST /api/notifications/send"]
     Compliance["/api/compliance<br/>GET /api/compliance (filters: clinic_id, status)<br/>POST /api/compliance/events<br/>PATCH /api/compliance/events/{event_id}"]
+    Analytics["/api/analytics<br/>GET /api/analytics/volume<br/>GET /api/analytics/resolution<br/>GET /api/analytics/triage<br/>GET /api/analytics/language<br/>GET /api/analytics/no-show<br/>GET /api/analytics/revenue<br/>GET /api/analytics/delivery<br/>GET /api/analytics/benchmarks"]
 
     StateGuard["PATCH /api/calls/{call_id}/state<br/>409 on invalid transition (STATE_TRANSITIONS)"]
     StatusGuard["PATCH .../status (appointment / prescription / payment)<br/>422 on invalid status value"]
     ConsentGuard["POST /api/calls/{id}/consent<br/>422 on non unknown/granted/denied<br/>compliance_events deadline = detected_at + 72h (DPDP)"]
+    PeriodGuard["GET /api/analytics/*<br/>422 on from > to / range > 366d / unparseable<br/>defaults: last 30 days"]
     NotFound["All {id} lookups<br/>404 on missing row"]
 ```
 
@@ -32,7 +34,7 @@ flowchart LR
 - Three routers (clinics, calls, appointments, prescriptions, payments — five
   modules) each declare `APIRouter(prefix="/api/<name>")`; `voice` is registered
   with the `/api/voice` prefix and `auth` with `prefix="/api/auth"` in `main.py`
-  (all seven routers included).
+  (all ten routers included).
 - This endpoint set is the executable contract in
   `backend/tests/test_api_routes.py` (`EXPECTED_ENDPOINTS`) and the basis for the
   Docker/CI HTTP smoke tests.
@@ -86,3 +88,16 @@ flowchart LR
   operational follow-on (Q8 email channel). Retention per kind
   (`services/retention.py`, env-overridable) is enforced by
   `postgres.purge_expired` from the Docker/CI cron.
+- **Analytics (G6-Q9 wired, spec-kpis-q9.md): per-KPI endpoints under
+  `/api/analytics`** (Q2=A2) — one GET per KPI: volume (total/by_state/by_day/
+  avg duration), resolution rate (COMPLETE over terminal; PAYMENT_SENT
+  excluded as in-progress), triage mix (green/amber/red/critical + untriaged),
+  language dist (hi/en/ta/te/bn + unknown), no-show rate (over terminal
+  appointments), revenue (captured/refunded/by_kind/currency), delivery
+  success (per notification kind). `/benchmarks` serves the static
+  market-context cards (2026: Hyro FCR 70-79%, Interactly 72%,
+  no-show India 18-25% → voice-target 8-12%, confirmation 75-85%) — display
+  only, never enforced. Pure computed (Q3=A1): read-only aggregates over
+  calls/appointments/payments/notifications riding their RLS, zero schema
+  writes; period = optional from/to (default last 30 days, 366-day cap,
+  422 on bad order/over-cap/unparseable, naive assumed UTC).

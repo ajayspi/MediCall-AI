@@ -33,6 +33,7 @@ from sqlalchemy import (
     UniqueConstraint,
     delete,
     event,
+    func,
     insert,
     select,
     text,
@@ -1231,6 +1232,237 @@ async def purge_expired(
         result = await session.execute(stmt)
         await session.commit()
         return result.rowcount if result.rowcount is not None else 0
+
+
+# ─── G6-Q9 MVP KPI aggregates ──────────────────────────────────────────────
+# Per-KPI read-only rollups over calls / appointments / payments /
+# notifications (spec-kpis-q9.md Q3=A1: pure computed, no writes). Every
+# query filters on clinic_id and the window; RLS still applies because the
+# queries run as the authenticated app user (clinic membership). The service
+# layer (services/analytics.py) shapes these into the payload + derives rates.
+
+
+async def compute_volume(
+    clinic_id: uuid.UUID, from_: datetime, to: datetime
+) -> dict:
+    """Call volume: total, by_state, by_day, duration sum/count.
+
+    by_day uses func.date(Call.started_at) so the payload is a plain
+    YYYY-MM-DD key map for the dashboard volume chart.
+    """
+    async with SessionFactory() as session:
+        base = (Call.clinic_id == clinic_id,
+                Call.started_at >= from_, Call.started_at <= to)
+        total = (
+            await session.execute(select(func.count(Call.id)).where(*base))
+        ).scalar_one()
+        state_rows = (
+            await session.execute(
+                select(Call.state, func.count(Call.id))
+                .where(*base)
+                .group_by(Call.state)
+            )
+        ).all()
+        day_rows = (
+            await session.execute(
+                select(func.date(Call.started_at), func.count(Call.id))
+                .where(*base)
+                .group_by(func.date(Call.started_at))
+            )
+        ).all()
+        duration_sum, duration_count = (
+            await session.execute(
+                select(
+                    func.coalesce(func.sum(Call.duration_seconds), 0),
+                    func.count(Call.duration_seconds),
+                ).where(*base)
+            )
+        ).one()
+        by_state = {state: n for state, n in state_rows}
+        by_day = {str(day): n for day, n in day_rows}
+        return {
+            "total": total,
+            "by_state": by_state,
+            "by_day": by_day,
+            "duration_sum": int(duration_sum or 0),
+            "duration_count": int(duration_count or 0),
+        }
+
+
+async def compute_resolution(
+    clinic_id: uuid.UUID, from_: datetime, to: datetime
+) -> dict:
+    """Terminal outcome counts: COMPLETE / DROPPED / ESCALATED / PAYMENT_EXPIRED.
+
+    PAYMENT_SENT is in-progress by design — the resolution_rate in the
+    service derives from these four buckets only.
+    """
+    terminal = ("COMPLETE", "DROPPED", "ESCALATED", "PAYMENT_EXPIRED")
+    async with SessionFactory() as session:
+        rows = (
+            await session.execute(
+                select(Call.state, func.count(Call.id))
+                .where(
+                    Call.clinic_id == clinic_id,
+                    Call.started_at >= from_,
+                    Call.started_at <= to,
+                    Call.state.in_(terminal),
+                )
+                .group_by(Call.state)
+            )
+        ).all()
+    counts = {"COMPLETE": 0, "DROPPED": 0, "ESCALATED": 0, "PAYMENT_EXPIRED": 0}
+    for state, n in rows:
+        counts[state] = n
+    return counts
+
+
+async def compute_triage(
+    clinic_id: uuid.UUID, from_: datetime, to: datetime
+) -> dict:
+    """Severity distribution (green/amber/red/critical) + untriaged bucket."""
+    async with SessionFactory() as session:
+        base = (Call.clinic_id == clinic_id,
+                Call.started_at >= from_, Call.started_at <= to)
+        total = (
+            await session.execute(select(func.count(Call.id)).where(*base))
+        ).scalar_one()
+        rows = (
+            await session.execute(
+                select(Call.triage_severity, func.count(Call.id))
+                .where(*base, Call.triage_severity.isnot(None))
+                .group_by(Call.triage_severity)
+            )
+        ).all()
+    counts = {"green": 0, "amber": 0, "red": 0, "critical": 0}
+    for severity, n in rows:
+        if severity in counts:
+            counts[severity] = n
+    counts["untriaged"] = total - sum(counts.values())
+    return counts
+
+
+async def compute_language(
+    clinic_id: uuid.UUID, from_: datetime, to: datetime
+) -> dict:
+    """Calls per caller_language (hi/en/ta/te/bn); null/unknown -> unknown."""
+    known = ("hi", "en", "ta", "te", "bn")
+    async with SessionFactory() as session:
+        rows = (
+            await session.execute(
+                select(Call.caller_language, func.count(Call.id))
+                .where(
+                    Call.clinic_id == clinic_id,
+                    Call.started_at >= from_,
+                    Call.started_at <= to,
+                )
+                .group_by(Call.caller_language)
+            )
+        ).all()
+    counts = {"hi": 0, "en": 0, "ta": 0, "te": 0, "bn": 0, "unknown": 0}
+    for language, n in rows:
+        counts[language if language in known else "unknown"] += n
+    return counts
+
+
+async def compute_no_show(
+    clinic_id: uuid.UUID, from_: datetime, to: datetime
+) -> dict:
+    """Terminal appointment counts: no_show / completed / cancelled.
+
+    pending/confirmed bookings are excluded (they are not yet due); the
+    service derives no_show_rate from these three.
+    """
+    terminal = ("no_show", "completed", "cancelled")
+    async with SessionFactory() as session:
+        rows = (
+            await session.execute(
+                select(Appointment.status, func.count(Appointment.id))
+                .where(
+                    Appointment.clinic_id == clinic_id,
+                    Appointment.scheduled_at >= from_,
+                    Appointment.scheduled_at <= to,
+                    Appointment.status.in_(terminal),
+                )
+                .group_by(Appointment.status)
+            )
+        ).all()
+    counts = {"no_show": 0, "completed": 0, "cancelled": 0}
+    for status, n in rows:
+        counts[status] = n
+    return counts
+
+
+async def compute_revenue(
+    clinic_id: uuid.UUID, from_: datetime, to: datetime
+) -> dict:
+    """Captured / refunded sums + captured by kind + currency (default INR)."""
+    async with SessionFactory() as session:
+        base = (Payment.clinic_id == clinic_id,
+                Payment.created_at >= from_, Payment.created_at <= to)
+        refunded = (
+            await session.execute(
+                select(func.coalesce(func.sum(Payment.amount), 0))
+                .where(*base, Payment.status == "refunded")
+            )
+        ).scalar_one()
+        kind_rows = (
+            await session.execute(
+                select(Payment.kind, func.sum(Payment.amount))
+                .where(*base, Payment.status == "captured")
+                .group_by(Payment.kind)
+            )
+        ).all()
+        currency = (
+            await session.execute(
+                select(Payment.currency).where(*base).limit(1)
+            )
+        ).scalar()
+    captured = 0.0
+    by_kind = {"consultation": 0.0, "refill": 0.0, "subscription": 0.0}
+    for kind, amount in kind_rows:
+        amount = float(amount or 0)
+        captured += amount
+        if kind in by_kind:
+            by_kind[kind] = amount
+    return {
+        "captured": round(captured, 2),
+        "refunded": round(float(refunded or 0), 2),
+        "by_kind": by_kind,
+        "currency": currency or "INR",
+    }
+
+
+async def compute_delivery(
+    clinic_id: uuid.UUID, from_: datetime, to: datetime
+) -> dict:
+    """Per-kind {sent, failed} counts for notifications in the window.
+
+    queued rows are in-flight and excluded from both buckets; the service
+    derives total + success_rate per kind.
+    """
+    async with SessionFactory() as session:
+        rows = (
+            await session.execute(
+                select(
+                    Notification.kind,
+                    Notification.status,
+                    func.count(Notification.id),
+                )
+                .where(
+                    Notification.clinic_id == clinic_id,
+                    Notification.created_at >= from_,
+                    Notification.created_at <= to,
+                    Notification.status.in_(("sent", "failed")),
+                )
+                .group_by(Notification.kind, Notification.status)
+            )
+        ).all()
+    per_kind = {}
+    for kind, status, n in rows:
+        entry = per_kind.setdefault(kind, {"sent": 0, "failed": 0})
+        entry[status] = n
+    return per_kind
 
 
 async def log_call_embedding(

@@ -344,6 +344,28 @@ def main() -> int:
     )
     check("POST /api/calls/{id}/consent invalid value -> 422", s == 422, f"(got {s})")
 
+    # --- analytics: MVP KPI endpoints (G6-Q9) -------------------------------
+    # Per-KPI endpoints ride the demo tenant's RLS; benchmarks are static.
+    s, vol = request(
+        "GET",
+        f"/api/analytics/volume?clinic_id={clinic_id}&from=2026-01-01&to=2026-12-31",
+        headers=auth,
+    )
+    check("GET /api/analytics/volume -> 200 + total",
+          s == 200 and vol and "total" in (vol.get("calls") or {}), f"(got {s})")
+
+    s, bench = request("GET", "/api/analytics/benchmarks", headers=auth)
+    check("GET /api/analytics/benchmarks -> 200 + resolution",
+          s == 200 and bench and "resolution" in bench and "no_show" in bench,
+          f"(got {s})")
+
+    s, _ = request(
+        "GET",
+        f"/api/analytics/volume?clinic_id={clinic_id}&from=2026-12-31&to=2026-01-01",
+        headers=auth,
+    )
+    check("GET /api/analytics/volume bad range -> 422", s == 422, f"(got {s})")
+
     # --- voice: call-completed needs the service token (enforcement) ---------
     s, j = request(
         "POST",
