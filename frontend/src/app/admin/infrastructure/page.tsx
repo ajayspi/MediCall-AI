@@ -15,6 +15,7 @@ export default function InfrastructurePage() {
           Providers behind the call pipeline — Exotel/Knowlarity/Twilio fallback chain, LiveKit,
           Deepgram, ElevenLabs, OpenAI, PostgreSQL, Redis.
         </p>
+        <p className="text-xs text-slate-600 mt-2">no backend entity yet — rendered from static fixtures until health checks are wired (G6-Q11).</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">

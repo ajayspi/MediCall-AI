@@ -1,23 +1,26 @@
+"use client";
+
 import { Card } from "@/components/card";
 import { StatCard } from "@/components/stat-card";
-import { analyticsKpis, hourlyCalls, languageMix, severityMix } from "@/components/mock";
+import { useAnalyticsKpis } from "@/lib/api";
 
 export default function AnalyticsPage() {
-  const maxHourly = Math.max(...hourlyCalls);
+  const { kpis, hourlyCalls, languageMix, severityMix } = useAnalyticsKpis();
+  const maxHourly = Math.max(1, ...hourlyCalls);
   return (
     <div className="space-y-8">
       <div>
         <h1 className="text-3xl font-bold text-white">Analytics</h1>
-        <p className="text-slate-400 mt-1">Volume, language and severity trends — mock until the routes phase.</p>
+        <p className="text-slate-400 mt-1">Volume, language and severity trends, live from /api/analytics.</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        {analyticsKpis.map((k) => (
+        {kpis.map((k) => (
           <StatCard key={k.label} {...k} />
         ))}
       </div>
 
-      <Card title="Call Volume by Hour" subtitle="Today (deterministic mock series)">
+      <Card title="Call Volume by Hour" subtitle="Today (live volume)">
         <div className="h-56 flex items-end justify-between gap-1 px-2">
           {hourlyCalls.map((v, i) => (
             <div key={i} className="flex-1 flex flex-col items-center gap-1">

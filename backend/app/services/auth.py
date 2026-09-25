@@ -39,14 +39,19 @@ OTP_MAX_ATTEMPTS = 5
 TOKEN_TTL_SECONDS = 43_200     # 12 hours (Phase-1 stateless JWT)
 TOKEN_ALG = "HS256"
 
-# Role matrix (clinic scope): owner > doctor > triage_agent > staff > readonly
-ROLES = ("owner", "staff", "triage_agent", "doctor", "readonly")
+# Role matrix: platform_admin (platform operator, above the clinic scope) >
+# owner > doctor > triage_agent > staff > readonly. platform_admin is the only
+# role that may call the /api/admin router (G6-Q11); it is seeded out-of-band
+# (demo tenant seed) — register() grants DEFAULT_ROLE only, so there is no
+# self-serve path, same as owner.
+ROLES = ("owner", "staff", "triage_agent", "doctor", "readonly", "platform_admin")
 ROLE_WEIGHTS = {
     "readonly": 1,
     "staff": 2,
     "triage_agent": 3,
     "doctor": 4,
     "owner": 5,
+    "platform_admin": 6,
 }
 DEFAULT_ROLE = "staff"
 

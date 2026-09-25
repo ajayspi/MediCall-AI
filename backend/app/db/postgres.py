@@ -1465,6 +1465,295 @@ async def compute_delivery(
     return per_kind
 
 
+# ─── Platform aggregates (G6-Q11 — /api/admin router, role-gated) ───────────
+# Cross-tenant read-only aggregates for the platform admin surface. Each fn
+# arms service_request_ctx() internally (the auth-CRUD pattern) so the RLS
+# FORCE policies admit the reads; the ONLY gate is require_roles(
+# "platform_admin") at the API layer — clinic-scoped code never calls these.
+
+TERMINAL_STATES = ("COMPLETE", "DROPPED", "ESCALATED", "PAYMENT_EXPIRED")
+
+
+async def platform_overview() -> dict:
+    """Cross-clinic headline numbers for the admin overview page."""
+    today = now_tz().replace(hour=0, minute=0, second=0, microsecond=0)
+    with service_request_ctx():
+        async with SessionFactory() as session:
+            clinics_total = (
+                await session.execute(select(func.count(Clinic.id)))
+            ).scalar_one()
+            clinics_active = (
+                await session.execute(
+                    select(func.count(Clinic.id)).where(Clinic.is_active.is_(True))
+                )
+            ).scalar_one()
+            calls_today = (
+                await session.execute(
+                    select(func.count(Call.id)).where(Call.started_at >= today)
+                )
+            ).scalar_one()
+            live_calls = (
+                await session.execute(
+                    select(func.count(Call.id)).where(
+                        Call.state.notin_(TERMINAL_STATES)
+                    )
+                )
+            ).scalar_one()
+            revenue_today = (
+                await session.execute(
+                    select(func.coalesce(func.sum(Payment.amount), 0)).where(
+                        Payment.created_at >= today,
+                        Payment.status == "captured",
+                    )
+                )
+            ).scalar_one()
+    return {
+        "clinics_total": int(clinics_total),
+        "clinics_active": int(clinics_active),
+        "calls_today": int(calls_today),
+        "live_calls": int(live_calls),
+        "revenue_today_inr": round(float(revenue_today or 0), 2),
+    }
+
+
+async def platform_clinics() -> list[dict]:
+    """Every clinic with MTD/today/live call aggregates, ordered by name.
+
+    Serialized inside the session block (ORM attribute reads must not outlive
+    the session close).
+    """
+    month_start = now_tz().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    today = now_tz().replace(hour=0, minute=0, second=0, microsecond=0)
+    with service_request_ctx():
+        async with SessionFactory() as session:
+            clinics = (
+                (await session.execute(select(Clinic).order_by(Clinic.name)))
+                .scalars()
+                .all()
+            )
+            mtd_rows = (
+                await session.execute(
+                    select(Call.clinic_id, func.count(Call.id))
+                    .where(Call.started_at >= month_start)
+                    .group_by(Call.clinic_id)
+                )
+            ).all()
+            today_rows = (
+                await session.execute(
+                    select(Call.clinic_id, func.count(Call.id))
+                    .where(Call.started_at >= today)
+                    .group_by(Call.clinic_id)
+                )
+            ).all()
+            live_rows = (
+                await session.execute(
+                    select(Call.clinic_id, func.count(Call.id))
+                    .where(Call.state.notin_(TERMINAL_STATES))
+                    .group_by(Call.clinic_id)
+                )
+            ).all()
+            mtd = {cid: n for cid, n in mtd_rows}
+            tc = {cid: n for cid, n in today_rows}
+            lv = {cid: n for cid, n in live_rows}
+            out = [
+                {
+                    "id": str(c.id),
+                    "name": c.name,
+                    "city": c.city,
+                    "state": c.state,
+                    "plan": c.plan,
+                    "is_active": c.is_active,
+                    "calls_mtd": int(mtd.get(c.id, 0)),
+                    "calls_today": int(tc.get(c.id, 0)),
+                    "live_calls": int(lv.get(c.id, 0)),
+                }
+                for c in clinics
+            ]
+    return out
+
+
+async def platform_patients() -> list[dict]:
+    """Distinct callers across clinics (admin patients view).
+
+    A caller may span clinics, so the row carries their most recent call's
+    clinic (id + name) and state; counts aggregate over all their calls.
+    """
+    with service_request_ctx():
+        async with SessionFactory() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        Call.caller_number,
+                        Call.caller_language,
+                        func.count(Call.id),
+                        func.min(Call.started_at),
+                        func.max(Call.started_at),
+                    )
+                    .where(Call.caller_number.isnot(None))
+                    .group_by(Call.caller_number, Call.caller_language)
+                )
+            ).all()
+            latest_rows = (
+                await session.execute(
+                    select(
+                        Call.caller_number,
+                        Call.clinic_id,
+                        Clinic.name,
+                        Call.state,
+                    )
+                    .join(Clinic, Call.clinic_id == Clinic.id)
+                    .where(Call.caller_number.isnot(None))
+                    .order_by(Call.started_at.desc())
+                )
+            ).all()
+    latest = {}
+    for number, clinic_id, clinic_name, state in latest_rows:
+        latest.setdefault(number, (str(clinic_id), clinic_name, state))
+    out = []
+    for number, language, count, first_at, last_at in rows:
+        clinic_id, clinic_name, state = latest.get(number, (None, None, None))
+        out.append(
+            {
+                "caller_number": number,
+                "clinic_id": clinic_id,
+                "clinic_name": clinic_name,
+                "language": language,
+                "first_call_at": first_at.isoformat() if first_at else None,
+                "last_call_at": last_at.isoformat() if last_at else None,
+                "call_count": int(count),
+                "last_state": state,
+            }
+        )
+    out.sort(key=lambda r: r["last_call_at"] or "", reverse=True)
+    return out
+
+
+async def platform_revenue() -> dict:
+    """Cross-clinic revenue: captured/pending/failed/refunded sums + counts,
+    captured by gateway, and captured by clinic (top first)."""
+    with service_request_ctx():
+        async with SessionFactory() as session:
+            status_rows = (
+                await session.execute(
+                    select(
+                        Payment.status,
+                        func.coalesce(func.sum(Payment.amount), 0),
+                        func.count(Payment.id),
+                    ).group_by(Payment.status)
+                )
+            ).all()
+            gateway_rows = (
+                await session.execute(
+                    select(
+                        Payment.gateway,
+                        func.coalesce(func.sum(Payment.amount), 0),
+                        func.count(Payment.id),
+                    )
+                    .where(Payment.status == "captured")
+                    .group_by(Payment.gateway)
+                )
+            ).all()
+            clinic_rows = (
+                await session.execute(
+                    select(
+                        Clinic.id,
+                        Clinic.name,
+                        func.coalesce(func.sum(Payment.amount), 0),
+                        func.count(Payment.id),
+                    )
+                    .join(Payment, Payment.clinic_id == Clinic.id)
+                    .where(Payment.status == "captured")
+                    .group_by(Clinic.id, Clinic.name)
+                    .order_by(func.sum(Payment.amount).desc())
+                )
+            ).all()
+    totals = {"captured": 0.0, "pending": 0.0, "failed": 0.0, "refunded": 0.0}
+    count_by_status = {"captured": 0, "pending": 0, "failed": 0, "refunded": 0}
+    for status, amount, n in status_rows:
+        if status in totals:
+            totals[status] = round(float(amount or 0), 2)
+            count_by_status[status] = int(n)
+    by_gateway = {
+        gateway or "unknown": {
+            "captured_inr": round(float(amount or 0), 2),
+            "count": int(n),
+        }
+        for gateway, amount, n in gateway_rows
+    }
+    by_clinic = [
+        {
+            "clinic_id": str(cid),
+            "clinic_name": name,
+            "captured_inr": round(float(amount or 0), 2),
+            "count": int(n),
+        }
+        for cid, name, amount, n in clinic_rows
+    ]
+    return {
+        "captured_inr": totals["captured"],
+        "pending_inr": totals["pending"],
+        "failed_inr": totals["failed"],
+        "refunded_inr": totals["refunded"],
+        "count": count_by_status["captured"],
+        "by_gateway": by_gateway,
+        "by_clinic": by_clinic,
+    }
+
+
+async def platform_calls(limit: int = 50, offset: int = 0) -> list[dict]:
+    """Recent calls across clinics (admin live feed), newest first.
+
+    limit capped at 200 (mirrors the clinic-scoped list_calls pagination).
+    """
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    with service_request_ctx():
+        async with SessionFactory() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        Call.id,
+                        Call.clinic_id,
+                        Clinic.name.label("clinic_name"),
+                        Call.caller_number,
+                        Call.caller_language,
+                        Call.state,
+                        Call.triage_severity,
+                        Call.started_at,
+                        Call.duration_seconds,
+                    )
+                    .join(Clinic, Call.clinic_id == Clinic.id)
+                    .order_by(Call.started_at.desc())
+                    .limit(limit)
+                    .offset(offset)
+                )
+            ).all()
+    return [
+        {
+            "id": str(cid),
+            "clinic_id": str(clinic_id),
+            "clinic_name": clinic_name,
+            "caller_number": caller_number,
+            "language": caller_language,
+            "state": state,
+            "severity": triage_severity,
+            "started_at": started_at.isoformat() if started_at else None,
+            "duration_seconds": int(duration or 0),
+        }
+        for (
+            cid,
+            clinic_id,
+            clinic_name,
+            caller_number,
+            caller_language,
+            state,
+            triage_severity,
+            started_at,
+            duration,
+        ) in rows
+    ]
+
+
 async def log_call_embedding(
     call_id: uuid.UUID,
     embedding: list,

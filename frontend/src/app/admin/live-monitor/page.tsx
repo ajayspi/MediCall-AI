@@ -1,13 +1,16 @@
+"use client";
+
 import { Badge } from "@/components/badge";
 import { Card } from "@/components/card";
 import { StatCard } from "@/components/stat-card";
 import { LanguageBadge } from "@/components/language-badge";
 import { CallStateBadge } from "@/components/call-state-badge";
-import { liveCallKpis, todayCalls } from "@/components/mock";
+import { useAdminLiveCalls } from "@/lib/api";
 
 const PROVIDERS = ["Exotel", "Knowlarity", "Twilio India"];
 
 export default function LiveMonitorPage() {
+  const { kpis, calls } = useAdminLiveCalls();
   return (
     <div className="space-y-8">
       <div>
@@ -16,7 +19,7 @@ export default function LiveMonitorPage() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        {liveCallKpis.map((k) => (
+        {kpis.map((k) => (
           <StatCard key={k.label} {...k} />
         ))}
       </div>
@@ -35,10 +38,10 @@ export default function LiveMonitorPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {todayCalls.map((c, i) => (
+              {calls.map((c, i) => (
                 <tr key={c.id} className="hover:bg-white/[0.02]">
                   <td className="py-4 font-mono text-sm text-slate-400">{c.id}</td>
-                  <td className="py-4 text-sm text-white">City Care Clinic</td>
+                  <td className="py-4 text-sm text-white">{c.clinicName}</td>
                   <td className="py-4">
                     <LanguageBadge lang={c.language} />
                   </td>

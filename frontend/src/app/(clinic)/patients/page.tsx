@@ -1,9 +1,12 @@
+"use client";
+
 import { LanguageBadge } from "@/components/language-badge";
 import { Card } from "@/components/card";
 import { StatCard } from "@/components/stat-card";
-import { patientKpis, patients } from "@/components/mock";
+import { useRecentCallers } from "@/lib/api";
 
 export default function PatientsPage() {
+  const { rows, kpis } = useRecentCallers();
   return (
     <div className="space-y-8">
       <div>
@@ -12,7 +15,7 @@ export default function PatientsPage() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        {patientKpis.map((k) => (
+        {kpis.map((k) => (
           <StatCard key={k.label} {...k} />
         ))}
       </div>
@@ -30,7 +33,7 @@ export default function PatientsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {patients.map((p) => (
+              {rows.map((p) => (
                 <tr key={p.phone} className="hover:bg-white/[0.02]">
                   <td className="py-4 text-sm font-medium text-white">{p.name}</td>
                   <td className="py-4 font-mono text-sm text-slate-400">{p.phone}</td>

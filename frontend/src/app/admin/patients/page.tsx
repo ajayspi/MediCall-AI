@@ -1,7 +1,9 @@
+"use client";
+
 import { LanguageBadge } from "@/components/language-badge";
 import { Card } from "@/components/card";
 import { StatCard } from "@/components/stat-card";
-import { platformPatients } from "@/components/mock";
+import { useAdminPatients } from "@/lib/api";
 
 const patientsKpis = [
   { label: "Patients (cross-clinic)", value: "18,420", trend: "+412 this week", trendUp: true },
@@ -10,6 +12,7 @@ const patientsKpis = [
 ];
 
 export default function PlatformPatientsPage() {
+  const patients = useAdminPatients();
   return (
     <div className="space-y-8">
       <div>
@@ -36,7 +39,7 @@ export default function PlatformPatientsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {platformPatients.map((p) => (
+              {patients.map((p) => (
                 <tr key={p.phone} className="hover:bg-white/[0.02]">
                   <td className="py-4 text-sm font-medium text-white">{p.name}</td>
                   <td className="py-4 font-mono text-sm text-slate-400">{p.phone}</td>

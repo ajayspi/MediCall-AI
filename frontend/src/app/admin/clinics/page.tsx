@@ -1,7 +1,9 @@
+"use client";
+
 import { Badge } from "@/components/badge";
 import { Card } from "@/components/card";
 import { StatCard } from "@/components/stat-card";
-import { platformClinics } from "@/components/mock";
+import { useAdminClinics } from "@/lib/api";
 
 const STATUS_TONE: Record<string, "green" | "amber" | "neutral"> = {
   Active: "green",
@@ -17,6 +19,7 @@ const clinicsKpis = [
 ];
 
 export default function ClinicsPage() {
+  const clinics = useAdminClinics();
   return (
     <div className="space-y-8">
       <div>
@@ -52,7 +55,7 @@ export default function ClinicsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {platformClinics.map((c) => (
+              {clinics.map((c) => (
                 <tr key={c.name} className="hover:bg-white/[0.02]">
                   <td className="py-4 text-sm font-medium text-white">{c.name}</td>
                   <td className="py-4 text-sm text-slate-400">{c.city}</td>

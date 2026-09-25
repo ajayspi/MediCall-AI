@@ -426,13 +426,16 @@ CREATE POLICY users_own_data ON users
         OR current_setting('app.service_request', true) = 'on'
     );
 
--- Staff can read clinic info
+-- Staff can read clinic info. The platform_admin aggregate reads (admin
+-- router, G6-Q11) pass through the server-side service bypass, gated at the
+-- API layer by require_roles('platform_admin') — mirrors users_own_data.
 CREATE POLICY clinic_staff_read ON clinics
     FOR SELECT USING (
         id IN (
             SELECT clinic_id FROM clinic_users 
             WHERE user_id = auth.uid()
         )
+        OR current_setting('app.service_request', true) = 'on'
     );
 
 -- Staff can create calls for their clinic. The voice webhook path (verified
@@ -606,5 +609,21 @@ VALUES (
     '22222222-2222-2222-2222-222222222222',
     '11111111-1111-1111-1111-111111111111',
     'owner'
+)
+ON CONFLICT DO NOTHING;
+
+-- Platform operator (G6-Q11): the /api/admin router requires
+-- require_roles('platform_admin'), so the admin area needs a seeded operator
+-- account, exactly like the demo owner (register() can never grant the role).
+-- Same dev password as the demo owner: DemoPass!2026.
+INSERT INTO users (id, name, phone, email, password_hash, role, is_active)
+VALUES (
+    '33333333-3333-3333-3333-333333333333',
+    'Platform Admin',
+    '+919876543211',
+    'platform@medicall.in',
+    'pbkdf2_sha256$210000$f5e1e09bd2b39174bb70e78ec72e77a8$0c8be14df7ff2bb1280624f6f4c8232b093235be251035c8c7b8e469d4521fc6',
+    'platform_admin',
+    TRUE
 )
 ON CONFLICT DO NOTHING;

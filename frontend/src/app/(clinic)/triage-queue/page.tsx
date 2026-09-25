@@ -1,8 +1,10 @@
+"use client";
+
 import { Card } from "@/components/card";
 import { StatCard } from "@/components/stat-card";
 import { LanguageBadge } from "@/components/language-badge";
 import { SeverityBadge } from "@/components/severity-badge";
-import { triageQueue } from "@/components/mock";
+import { useTriageQueue } from "@/lib/api";
 
 const TriageKpis = [
   { label: "Waiting", value: "6", trend: "2 above comfort target", trendUp: false },
@@ -12,6 +14,7 @@ const TriageKpis = [
 ];
 
 export default function TriageQueuePage() {
+  const triageQueue = useTriageQueue();
   return (
     <div className="space-y-8">
       <div>

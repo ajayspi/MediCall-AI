@@ -21,6 +21,7 @@ export default function BillingPage() {
       <div>
         <h1 className="text-3xl font-bold text-white">Billing</h1>
         <p className="text-slate-400 mt-1">Plans and clinic bills in rupees.</p>
+        <p className="text-xs text-slate-600 mt-2">no backend entity yet — rendered from static fixtures until subscriptions land (G6-Q11).</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">

@@ -1,16 +1,21 @@
+"use client";
+
 import { Badge } from "@/components/badge";
 import { Card } from "@/components/card";
 import { StatCard } from "@/components/stat-card";
-import { prescriptionKpis, prescriptions } from "@/components/mock";
+import { usePrescriptions } from "@/lib/api";
 
 const STATUS_TONE: Record<string, "green" | "amber" | "blue" | "neutral"> = {
   Active: "green",
   Renewal: "amber",
   Pending: "blue",
   Expired: "neutral",
+  "Sent Pharmacy": "amber",
+  Dispensed: "green",
 };
 
 export default function PrescriptionsPage() {
+  const { rows, kpis } = usePrescriptions();
   return (
     <div className="space-y-8">
       <div>
@@ -19,7 +24,7 @@ export default function PrescriptionsPage() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        {prescriptionKpis.map((k) => (
+        {kpis.map((k) => (
           <StatCard key={k.label} {...k} />
         ))}
       </div>
@@ -38,7 +43,7 @@ export default function PrescriptionsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {prescriptions.map((p) => (
+              {rows.map((p) => (
                 <tr key={p.patient + p.medicine} className="hover:bg-white/[0.02]">
                   <td className="py-4 text-sm font-medium text-white">{p.patient}</td>
                   <td className="py-4 text-sm font-mono text-slate-300">{p.medicine}</td>

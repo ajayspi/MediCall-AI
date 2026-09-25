@@ -70,7 +70,7 @@ NEW_CRUD_HELPERS = (
     "update_payment_status",
 )
 
-ROUTER_MODULES = ("clinics", "calls", "appointments", "prescriptions", "payments", "notifications", "compliance", "analytics")
+ROUTER_MODULES = ("clinics", "calls", "appointments", "prescriptions", "payments", "notifications", "compliance", "analytics", "admin")
 SCHEMA_MODULES = ("clinic", "call", "appointment", "prescription", "payment")
 
 EXPECTED_ENDPOINTS = {
@@ -124,6 +124,13 @@ EXPECTED_ENDPOINTS = {
         ("get", "/revenue"),
         ("get", "/delivery"),
         ("get", "/benchmarks"),
+    },
+    "admin": {
+        ("get", ""),
+        ("get", "/clinics"),
+        ("get", "/patients"),
+        ("get", "/revenue"),
+        ("get", "/calls"),
     },
 }
 
@@ -271,9 +278,10 @@ def included_router_attrs(tree) -> set:
 
 
 class TestMainApp(unittest.TestCase):
-    def test_main_registers_all_ten_routers(self):
+    def test_main_registers_all_eleven_routers(self):
         """G6-Q1 added auth; G6-Q8 added notifications (eighth); G6-Q2 added
-        compliance (ninth); G6-Q9 added analytics (tenth, spec-kpis-q9.md)."""
+        compliance (ninth); G6-Q9 added analytics (tenth, spec-kpis-q9.md);
+        G6-Q11 added admin (eleventh, spec-frontend-wiring-q11.md)."""
         tree = py_tree(MAIN)
         included = included_router_attrs(tree)
         self.assertEqual(
@@ -288,9 +296,10 @@ class TestMainApp(unittest.TestCase):
                 "notifications",
                 "compliance",
                 "analytics",
+                "admin",
             },
             included,
-            f"main.py must include_router all 10; got {sorted(included)}",
+            f"main.py must include_router all 11; got {sorted(included)}",
         )
 
     def test_main_voice_keeps_api_voice_prefix(self):

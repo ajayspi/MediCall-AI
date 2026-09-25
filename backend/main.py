@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 import os
 
 from app.api import (
+    admin,
     analytics,
     appointments,
     auth,
@@ -60,6 +61,7 @@ app.include_router(payments.router)
 app.include_router(notifications.router)
 app.include_router(compliance.router)
 app.include_router(analytics.router)
+app.include_router(admin.router)
 app.include_router(
     auth.router, prefix="/api/auth", tags=["auth"]
 )

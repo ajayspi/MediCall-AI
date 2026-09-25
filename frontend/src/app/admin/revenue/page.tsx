@@ -1,7 +1,9 @@
+"use client";
+
 import { Badge } from "@/components/badge";
 import { Card } from "@/components/card";
 import { StatCard } from "@/components/stat-card";
-import { gateways, invoices, revenueKpis } from "@/components/mock";
+import { useAdminRevenue } from "@/lib/api";
 
 const GATEWAY_TONE: Record<string, "green" | "amber"> = {
   healthy: "green",
@@ -14,6 +16,7 @@ const INVOICE_TONE: Record<string, "green" | "amber"> = {
 };
 
 export default function RevenuePage() {
+  const { kpis, gateways, invoices } = useAdminRevenue();
   return (
     <div className="space-y-8">
       <div>
@@ -22,7 +25,7 @@ export default function RevenuePage() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        {revenueKpis.map((k) => (
+        {kpis.map((k) => (
           <StatCard key={k.label} {...k} />
         ))}
       </div>
