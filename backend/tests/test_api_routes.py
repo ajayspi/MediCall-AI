@@ -70,7 +70,7 @@ NEW_CRUD_HELPERS = (
     "update_payment_status",
 )
 
-ROUTER_MODULES = ("clinics", "calls", "appointments", "prescriptions", "payments")
+ROUTER_MODULES = ("clinics", "calls", "appointments", "prescriptions", "payments", "notifications")
 SCHEMA_MODULES = ("clinic", "call", "appointment", "prescription", "payment")
 
 EXPECTED_ENDPOINTS = {
@@ -104,6 +104,10 @@ EXPECTED_ENDPOINTS = {
         ("get", "/{payment_id}"),
         ("patch", "/{payment_id}/status"),
         ("post", "/webhook"),
+    },
+    "notifications": {
+        ("get", ""),
+        ("post", "/send"),
     },
 }
 
@@ -251,14 +255,23 @@ def included_router_attrs(tree) -> set:
 
 
 class TestMainApp(unittest.TestCase):
-    def test_main_registers_all_seven_routers(self):
-        """G6-Q1 added the auth router (prefix=/api/auth) to the original six."""
+    def test_main_registers_all_eight_routers(self):
+        """G6-Q1 added auth; G6-Q8 added the notifications router (eighth)."""
         tree = py_tree(MAIN)
         included = included_router_attrs(tree)
         self.assertEqual(
-            {"voice", "auth", "clinics", "calls", "appointments", "prescriptions", "payments"},
+            {
+                "voice",
+                "auth",
+                "clinics",
+                "calls",
+                "appointments",
+                "prescriptions",
+                "payments",
+                "notifications",
+            },
             included,
-            f"main.py must include_router all 7; got {sorted(included)}",
+            f"main.py must include_router all 8; got {sorted(included)}",
         )
 
     def test_main_voice_keeps_api_voice_prefix(self):

@@ -25,7 +25,7 @@ SMOKE = BACKEND / "scripts" / "smoke_api.py"
 COMPOSE = BACKEND.parent / "docker-compose.yml"
 ENV_EXAMPLE = BACKEND / ".env.example"
 
-ROUTER_MODULES = ("clinics", "calls", "appointments", "prescriptions", "payments")
+ROUTER_MODULES = ("clinics", "calls", "appointments", "prescriptions", "payments", "notifications")
 TENANT_TABLES = (
     "users",
     "clinics",
