@@ -177,6 +177,29 @@ is the launchpad.
   off `g-notify` tip `394192c` (spec `1e868e9` APPROVED → RED `e2f636f` →
   feat `fcdc589` → docs tip). Proof: `tests/test_languages_q4.py` 55/55 GREEN;
   regression **426/426**; compileall 0.
+- ✅ **CONSENT + DPDP (G6-Q2) DONE** — consent & DPDP Act 2023 layer, sign-off
+  Q1=A1 (per-call recording consent flag: `calls.recording_consent`
+  unknown/granted/denied default unknown + stdlib `services/consent.py`
+  5-language in-call parse `parse_consent_response` + `recording_allowed()`
+  egress gate + identity-gated `POST /api/calls/{call_id}/consent`; rides the
+  existing calls RLS), Q2=A1 (stdlib `services/retention.py`: RETENTION_DAYS
+  calls 365 / recordings 365 / notifications 180 / audit 2190 (6 yr), per-kind
+  env overrides, tz-aware `retention_deadline` + `postgres.purge_expired`
+  DELETE service wired for the Docker/CI cron), Q3=A1 (new `compliance_events`
+  tenant table: data_breach / consent_withdrawal / gdpr_request, severity,
+  status open/reported/closed, `notification_deadline` = detected_at + 72h
+  (`DPDP_BREACH_NOTIFICATION_HOURS`) computed at insert, reported_at stamped on
+  →reported; RLS `compliance_manage` mirroring `notifications_send`; 9th router
+  `app/api/compliance.py` GET/POST/PATCH — DPB alert is an operational
+  follow-on via the Q8 email channel), Q4=A1 (config constants:
+  `DATA_RESIDENCY_REGION` default "in" + `DPO_NAME`/`DPO_EMAIL` surfaced by
+  `compliance.py`; region pin = Q10's job). Branch `g-dpdp` off `g-languages`
+  tip `af63e3c` (spec `88cfa33` APPROVED → RED `e9ce9d2` 62 tests 30 FAIL+28
+  ERROR → feat `d2cf117` → docs tip). Proof: `tests/test_dpdp_q2.py` 62/62
+  GREEN; regression **488/488**; compileall 0. **SCHEMA FIX flagged**: Q8's
+  `notifications_send` policy was inert (never ENABLEd) → notifications was
+  cross-clinic readable; Q2 added it + compliance_events to the ENABLE+FORCE
+  lists (see tracker).
 - ▶️ **NEXT: live provider round-trips behind CI secrets** (Deepgram/
   ElevenLabs/OpenAI + LiveKit rooms + real gateway SDK dispatch + signed
   webhook end-to-end) and **run the ci.yml stack job on a Docker host** (RLS/
@@ -193,9 +216,14 @@ is the launchpad.
 - Stack: LiveKit Agents (primary) / TEN (multimodal fallback) / Bolna (OSS
   fallback); Deepgram STT + ElevenLabs TTS, 5 languages (hi/en/ta/te/bn);
   Razorpay/PhonePe/Cashfree; PostgreSQL + pgvector local (no Supabase).
+- DPDP (G6-Q2): per-call recording consent flag on `calls`
+  (unknown/granted/denied); retention 365/365/180/2190 days (env-overridable,
+  purge from the Docker/CI cron); 72-hr breach record + computed deadline on
+  `compliance_events`; data residency posture "in" + DPO env — the actual
+  region pin is Q10's job.
 
 ## 4. Still open (answer before the session that needs them)
-G6-Q2 consent/retention (DPDP), Q9 MVP KPIs, Q10 deploy topology.
+G6-Q9 MVP KPIs, G6-Q10 deploy topology. (Q2 consent/DPDP → DONE on `g-dpdp`.)
 
 ## 5. Verify first (before any edit)
 ```
@@ -216,6 +244,7 @@ tree — keep it clean; each phase gets its own `.worktrees\<name>` branch via
 - `spec-payments.md` — G6-Q5 payment flows + gateway wiring (Q1–Q5 APPROVED; DONE)
 - `spec-notifications-q8.md` — G6-Q8 WhatsApp-first notifications (Q1–Q4 APPROVED; DONE)
 - `spec-languages-q4.md` — G6-Q4 language layer: STT confidence fallback, single-source catalog, greetings, TTS voice keys (Q1–Q4 APPROVED; DONE)
+- `spec-dpdp-q2.md` — G6-Q2 consent + DPDP: per-call recording consent, retention policy, 72-hr breach flow, data localization + DPO (Q1–Q4 APPROVED; DONE)
 - `spec-guardrails-q3.md` — G6-Q3 clinical guardrails (Q1–Q4 APPROVED; DONE)
 - `spec-docker-ci.md` — Docker/CI phase spec (Q1 local+CI, Q2 client+2 pages, Q3 3-job workflow; DONE)
 - `spec-auth.md` — AuthN/Z (G6-Q1) + local-schema repair (Q1–Q4 APPROVED; DONE)

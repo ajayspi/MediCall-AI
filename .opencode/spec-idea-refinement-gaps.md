@@ -92,7 +92,7 @@ Not specified anywhere yet, each needs a decision before build:
 - **G6-Q1 Auth**: Full incl. ABHA login (OTP + password + Google/Microsoft SSO + ABHA).
 - **G6-Q6 Telephony**: Multiple fallback sources — wire Exotel + Knowlarity + Twilio India all with fallback chain, no single primary.
 - **G6-Q7 EHR/ABDM**: Transcript only for Phase 1 (no EHR writes; calls/appointments/prescriptions local only).
-- **G6-Q2/Q9/Q10** (consent-retention, KPIs, deploy topology): still open — answer before their respective build sessions. (Q3 guardrails → DONE `c01bbac`; Q5 payments → DONE `4812795`; Q8 notifications → DONE on `g-notify`; Q4 languages → DONE on `g-languages`.)
+- **G6-Q2/Q9/Q10**: Q2 (consent/DPDP) → **DONE on `g-dpdp`**; Q9 (KPIs) + Q10 (deploy topology) still open — answer before their respective build sessions. (Q3 guardrails → DONE `c01bbac`; Q5 payments → DONE `4812795`; Q8 notifications → DONE on `g-notify`; Q4 languages → DONE on `g-languages`.)
 - **Next**: fresh session, one task, starting with G1+G2 (make the app import: fix `main.py`, rewrite `postgres.py` so it parses).
 
 ## Implementation Record — G1+G2 DONE (2026-09-23)
@@ -688,6 +688,52 @@ Not specified anywhere yet, each needs a decision before build:
   `from app.services.languages import SUPPORTED_LANGUAGES` (a direct import —
   `import app.services.languages as l; l.SUPPORTED_LANGUAGES` is a different
   expression but same object; either re-exports the same tuple).
-- **Next**: answer G6-Q2 (consent/DPDP) / Q9 (KPIs) / Q10 (deploy topology) →
+- **G6-Q2 CONSENT+DPDP DONE (g-dpdp, off g-languages tip `af63e3c`; spec
+  `88cfa33` APPROVED → GREEN; RED `e9ce9d2` 62 tests 30 FAIL+28 ERROR → feat
+  `d2cf117` → docs tip; regression **488/488** (426 + 62), compileall 0)** —
+  sign-off Q1=A1 (per-call recording consent flag: `calls.recording_consent
+  TEXT NOT NULL DEFAULT 'unknown'` (unknown/granted/denied) + stdlib
+  `app/services/consent.py` with 5-language yes/no in-call parse
+  `parse_consent_response(text, language)` → granted/denied/None +
+  `recording_allowed()` egress gate + identity-gated
+  `POST /api/calls/{call_id}/consent`; rides existing calls RLS; no new table),
+  Q2=A1 (stdlib `app/services/retention.py`: RETENTION_DAYS calls 365 /
+  recordings 365 / notifications 180 / audit 2190 (6yr) with per-kind env
+  overrides `RETENTION_{CALLS,RECORDINGS,NOTIFICATIONS,AUDIT}_DAYS` + tz-aware
+  `retention_deadline()` + `postgres.purge_expired` DELETE service wired for
+  the Docker/CI cron — execution deferred; recordings = external MinIO
+  objects → documented posture + env constant only), Q3=A1 (new
+  `compliance_events` tenant table (event_type data_breach/consent_withdrawal/
+  gdpr_request, severity, status open/reported/closed, detected_at,
+  notification_deadline = detected + `DPDP_BREACH_NOTIFICATION_HOURS` default
+  72h computed at insert, reported_at stamped on →reported) + RLS
+  `compliance_manage` mirroring notifications_send + identity-gated
+  `app/api/compliance.py` (GET "" / POST /events 201 / PATCH /events/{event_id})
+  — 9th router; DPB alert = operational follow-on via the Q8 email channel, no
+  new notification kind), Q4=A1 (config constants: `DATA_RESIDENCY_REGION`
+  default "in" + `DPO_NAME`/`DPO_EMAIL` surfaced by `compliance.py`
+  (data_residency/dpo_contact); region pin owned by Q10). Delivered: 3 stdlib
+  leaf services + ComplianceEvent ORM + consent endpoints + `.env.example`
+  DPDP block (8 keys) + smoke_api compliance/consent checks + 01-er.md &
+  03-api-contracts.md. Baseline moved 426 → 488.
+- **SCHEMA FIX OUTSIDE THE Q2 APPROVAL (flagged)**: Q8 created
+  `notifications_send` but NEVER `ALTER TABLE notifications ENABLE ROW LEVEL
+  SECURITY` — the policy was INERT, so notifications (the DPDP audit trail)
+  was readable/writable across clinics by the app role. Q2 added
+  notifications + compliance_events to the ENABLE+FORCE lists (the schema
+  comment now says 9 tenant tables). No behavior contract changed (policies +
+  grants untouched); this activates Q8's own intended policy. If the reviewer
+  disagrees, the 2-line revert is trivial but re-opens the cross-tenant leak.
+- **Gotchas (one-line rules, Q2)**: retention deadline math — Jan 1 + 180 days
+  is **Jun 30** (2026 is not a leap year); write the expected date from the
+  calendar, not from intuition. The `compliance_events` grant test must assert
+  BOTH roles (`authenticated` + `medicall_app`) — the schema grants each role
+  in its own block. When a phase adds a router, the baseline `test_api_routes.py`
+  contract grows too (ROUTER_MODULES + EXPECTED_ENDPOINTS + the
+  "registers all N routers" test) — the new calls consent route also lands in
+  the calls endpoint set. `endpoint_set`/`endpoint_paths` produce exact
+  `(method, "/path")` tuples — a path-param spelling mismatch (`{event_id}`
+  vs `{eventId}`) fails them.
+- **Next**: answer G6-Q9 (KPIs) / Q10 (deploy topology) →
   live provider round-trips behind CI secrets → run the ci.yml stack job on a
   Docker host → merge branch tips to main.

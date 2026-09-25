@@ -5,7 +5,7 @@
 | **Phase** | G6-Q2: consent & DPDP Act 2023 layer — per-call recording consent flag, retention policy, 72-hr breach flow, data-localization/DPO posture |
 | **Tracker question** | "Consent & DPDP Act 2023: per-call recording consent flag, data localization, 72-hr breach flow, retention policy?" |
 | **Branch** | `g-dpdp` off `g-languages` tip `af63e3c` |
-| **Status** | DRAFT → **APPROVED** (signed off 2026-09-25, question tool, Q1=A1 Q2=A1 Q3=A1 Q4=A1) |
+| **Status** | DRAFT → APPROVED (signed off 2026-09-25, question tool, Q1=A1 Q2=A1 Q3=A1 Q4=A1) → **GREEN** (implemented 2026-09-25; regression 488/488, compileall 0) |
 | **Date** | 2026-09-25 |
 
 ## 0. Sign-off record (2026-09-25, question tool)
@@ -214,8 +214,33 @@ Docker/CI + the Q10 deploy session.
 4. Commits: spec (DRAFT→APPROVED) → RED → feat → docs; worktree `g-dpdp`
    stays clean at tip.
 
-## 7. Implementation record (pending)
+## 7. Implementation record (2026-09-25)
 
-- RED commit: —
-- feat commit: —
-- docs commit: —
+- RED commit: `e9ce9d2` — test_dpdp_q2.py (62 tests: 30 FAIL + 28 ERROR, exit
+  1). One test's arithmetic corrected post-RED (Jan 1 + 180 days = Jun 30 —
+  the implementation was right; the expectation was wrong).
+- feat commit: `d2cf117` (16 files, 734+/14−):
+  - **services** (stdlib leaves): `consent.py` (5-language parse,
+    recording_allowed), `retention.py` (RETENTION_DAYS + env overrides +
+    tz-aware retention_deadline), `compliance.py` (72-hr deadline,
+    data_residency, dpo_contact). consent.py imports SUPPORTED_LANGUAGES from
+    the Q4 catalog — no tuple copies.
+  - **schema**: `calls.recording_consent TEXT NOT NULL DEFAULT 'unknown'`;
+    `compliance_events` table + `idx_compliance_clinic_status`;
+    `compliance_manage` policy (membership OR service_request);
+    GRANTs authenticated + medicall_app. **RLS fix outside the approval**:
+    `notifications` was added to ENABLE+FORCE — its Q8 `notifications_send`
+    policy was INERT (never ENABLEd → cross-clinic readable audit trail).
+  - **postgres.py**: Call.recording_consent ORM, ComplianceEvent ORM,
+    update_call_consent, create/list/update_compliance_event (deadline
+    computed via the service), purge_expired (calls/notifications/audit;
+    Docker/CI cron wiring).
+  - **API**: `POST /api/calls/{call_id}/consent` (calls.py, identity-gated,
+    422 on bad value) + new `app/api/compliance.py` (GET "" / POST /events
+    201 / PATCH /events/{event_id}) — 9th router in main.py; schemas
+    ConsentUpdate + ComplianceEventCreate/Update; `.env.example` DPDP block
+    (8 keys); smoke_api.py compliance + consent checks; 03-api-contracts.md +
+    01-er.md updated. test_api_routes.py contract grown 8→9 routers (+calls
+    consent route).
+- docs commit: — (this session, next)
+- Baseline moved 426 → 488 (62 new). 488/488 ALL PASS, compileall 0.
