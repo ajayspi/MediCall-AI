@@ -9,6 +9,7 @@ flowchart LR
     Client --> Appointments
     Client --> Prescriptions
     Client --> Payments
+    Client --> Notifications
 
     Auth["/api/auth<br/>POST /api/auth/register<br/>POST /api/auth/login<br/>POST /api/auth/otp/request<br/>POST /api/auth/otp/verify<br/>GET /api/auth/me (Bearer)<br/>POST /api/auth/logout<br/>GET /api/auth/providers<br/>POST /api/auth/oauth/{provider}<br/>SSO = 501 until env keys (google / microsoft / abha)"]
     Voice["/api/voice (prefix applied in main.py)<br/>POST /webhook/exotel<br/>POST /webhook/knowlarity<br/>POST /webhook/twilio<br/>POST /livekit-agent-start<br/>POST /call-completed"]
@@ -17,6 +18,7 @@ flowchart LR
     Appointments["/api/appointments<br/>GET /api/appointments<br/>POST /api/appointments<br/>GET /api/appointments/{appointment_id}<br/>PATCH /api/appointments/{appointment_id}/status"]
     Prescriptions["/api/prescriptions<br/>GET /api/prescriptions<br/>POST /api/prescriptions<br/>GET /api/prescriptions/{prescription_id}<br/>PATCH /api/prescriptions/{prescription_id}/status"]
     Payments["/api/payments<br/>GET /api/payments<br/>POST /api/payments<br/>GET /api/payments/{payment_id}<br/>PATCH /api/payments/{payment_id}/status<br/>POST /api/payments/webhook"]
+    Notifications["/api/notifications<br/>GET /api/notifications<br/>POST /api/notifications/send"]
 
     StateGuard["PATCH /api/calls/{call_id}/state<br/>409 on invalid transition (STATE_TRANSITIONS)"]
     StatusGuard["PATCH .../status (appointment / prescription / payment)<br/>422 on invalid status value"]
@@ -62,3 +64,11 @@ flowchart LR
   run under the `app.service_request` RLS bypass, and it is idempotent by
   `gateway_ref` (unique partial index). On `captured` the linked call in
   `PAYMENT_SENT` advances to `COMPLETE`.
+- **Notifications (G6-Q8 wired, spec-notifications-q8.md): WhatsApp-first
+  messaging with SMS/email fallback per kind and per-language templates for
+  all 5 languages.** `POST /api/notifications/send` is identity-gated and 501s
+  when no channel has keys (Q3=A3a env gate); `GET /api/notifications` lists a
+  clinic's delivery trail. The payment-create hook fires the `payment_link`
+  leg to the caller's phone — a recorded, non-fatal side effect that never
+  fails a payment. Rows land in the `notifications` table under the
+  `notifications_send` policy (membership OR `app.service_request` bypass).

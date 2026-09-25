@@ -16,9 +16,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.auth import get_current_user
 from app.db.postgres import (
+    create_notification,
     create_payment,
     find_payment_by_gateway_ref,
+    get_appointment,
     get_call,
+    get_clinic,
     get_payment,
     list_payments,
     service_request_ctx,
@@ -42,6 +45,7 @@ from app.services.payments import (
     verify_webhook_request,
     webhook_status_for,
 )
+from app.services.notifications import send_notification
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
 
@@ -84,6 +88,49 @@ def _gateway_webhook_secrets(gateway: str):
         secret = os.environ.get("CASHFREE_WEBHOOK_SECRET", "")
         return {"secret": secret} if secret else None
     return None
+
+
+async def _send_notification_payment_link(clinic_id, payment_id, appointment_id) -> None:
+    """G6-Q8 payment_link leg: deliver the link to the caller's phone.
+
+    The Q5 sign-off requires link/UPI payment URLs to reach the caller's phone;
+    Q8 dispatches that through send_notification (WhatsApp-first with SMS/email
+    fallback). This is a RECORDED, NON-FATAL side effect (Q3=A3a): a missing
+    phone, missing PAYMENT_LINK_BASE_URL, or absent channel keys must never
+    fail or 501 the payment create — the row is written with status=queued.
+    """
+    try:
+        appt = await get_appointment(appointment_id) if appointment_id else None
+        phone = (appt.patient_phone or "").strip() if appt else ""
+        base = os.environ.get("PAYMENT_LINK_BASE_URL", "").rstrip("/")
+        if not phone or not base:
+            return
+        clinic = await get_clinic(clinic_id)
+        clinic_name = clinic.name if clinic else "MediCall"
+        lang = (appt.patient_language or "en") if appt else "en"
+        url = f"{base}/pay/{payment_id}"
+        result = send_notification(
+            "payment_link",
+            phone,
+            lang,
+            {"url": url, "clinic": clinic_name},
+            env=os.environ,
+        )
+        async with service_request_ctx():
+            await create_notification(
+                clinic_id=clinic_id,
+                kind="payment_link",
+                recipient=phone,
+                language=lang,
+                params=json.dumps({"url": url, "clinic": clinic_name}),
+                channel=result["channel"],
+                provider=result["provider"],
+                status=result["status"],
+                template=result["message"],
+            )
+    except Exception:
+        # Best-effort side effect — swallow (never break the payment response).
+        pass
 
 
 @router.get("")
@@ -139,6 +186,9 @@ async def create_payment_ep(data: PaymentCreate, user=Depends(get_current_user))
             raise HTTPException(
                 status_code=502, detail=f"gateway {data.gateway} request failed"
             )
+    if data.kind in ("link", "upi"):
+        # G6-Q8 payment_link leg: dispatch to the caller's phone (non-fatal).
+        await _send_notification_payment_link(cid, row.id, appointment_id)
     return payment_row(row)
 
 

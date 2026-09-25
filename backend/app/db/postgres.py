@@ -527,6 +527,45 @@ class Payment(Base):
         )
 
 
+class Notification(Base):
+    """Notifications — WhatsApp-first delivery records (G6-Q8)."""
+
+    __tablename__ = "notifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("clinics.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # payment_link, appointment_reminder, no_show_followup, otp, payment_receipt
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    recipient: Mapped[str] = mapped_column(String(120), nullable=False)
+    language: Mapped[str] = mapped_column(String(5), default="en")
+    # JSON-encoded template params (spec-notifications-q8.md Q2=A2c)
+    params: Mapped[Optional[str]] = mapped_column(Text)
+    # whatsapp / sms / email / push
+    channel: Mapped[Optional[str]] = mapped_column(String(20))
+    # meta / knowlarity / msg91 / smtp / fcm
+    provider: Mapped[Optional[str]] = mapped_column(String(20))
+    provider_ref: Mapped[Optional[str]] = mapped_column(String(255))
+    # queued, sent, failed
+    status: Mapped[str] = mapped_column(String(20), default="queued")
+    template: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz
+    )
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    def __repr__(self) -> str:
+        return (
+            f"<Notification id={self.id} clinic={self.clinic_id} "
+            f"kind={self.kind} {self.channel}/{self.provider} {self.status}>"
+        )
+
+
 # ─── Session Management ────────────────────────────────────────────────────
 
 
@@ -967,6 +1006,59 @@ async def update_payment_status(payment_id: uuid.UUID, status: str) -> bool:
         result = await session.execute(stmt)
         await session.commit()
         return result.scalar_one_or_none() is not None
+
+
+async def create_notification(
+    clinic_id: uuid.UUID,
+    kind: str,
+    recipient: str,
+    language: str = "en",
+    params: Optional[str] = None,
+    channel: Optional[str] = None,
+    provider: Optional[str] = None,
+    provider_ref: Optional[str] = None,
+    status: str = "queued",
+    template: Optional[str] = None,
+) -> Notification:
+    """Persist one delivery record (spec-notifications-q8.md Q4=A4a).
+
+    Called by the identity-gated /send endpoint; the payment-create hook runs
+    it inside service_request_ctx() so the RLS bypass (notifications_send)
+    covers server-side extends. The row feeds the DPDP audit trail (G6-Q2).
+    """
+    async with SessionFactory() as session:
+        stmt = (
+            insert(Notification)
+            .values(
+                clinic_id=clinic_id,
+                kind=kind,
+                recipient=recipient,
+                language=language,
+                params=params,
+                channel=channel,
+                provider=provider,
+                provider_ref=provider_ref,
+                status=status,
+                template=template,
+            )
+            .returning(Notification)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one()
+
+
+async def list_notifications(
+    clinic_id: uuid.UUID, status: Optional[str] = None
+) -> list[Notification]:
+    """List delivery records for a clinic, newest first, optional status."""
+    async with SessionFactory() as session:
+        query = select(Notification).where(Notification.clinic_id == clinic_id)
+        if status:
+            query = query.where(Notification.status == status)
+        query = query.order_by(Notification.created_at.desc())
+        result = await session.execute(query)
+        return list(result.scalars().all())
 
 
 async def log_call_embedding(

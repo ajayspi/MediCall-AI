@@ -83,6 +83,7 @@ ENDPOINTS = (
     "/api/payments",
     "/api/payments/{payment_id}/status",
     "/api/payments/webhook",
+    "/api/notifications/send",
     "/api/voice/call-completed",
 )
 
@@ -273,6 +274,24 @@ def main() -> int:
         headers={"X-Service-Token": SERVICE_TOKEN},
     )
     check("POST /api/payments/webhook (unknown gateway) -> 422", s == 422, f"(got {s})")
+
+    # --- notifications: manual send 501 without channel keys (G6-Q8) ---------
+    if os.environ.get("WHATSAPP_TOKEN"):
+        print("SKIP - WHATSAPP_TOKEN configured; the notifications 501 gate is not "
+              "exercisable (live dispatch territory runs in CI)")
+    else:
+        s, _ = request(
+            "POST", "/api/notifications/send",
+            {
+                "clinic_id": clinic_id,
+                "kind": "payment_link",
+                "recipient": "+91 90000 00002",
+                "language": "en",
+                "params": {"url": "https://pay.example/1", "clinic": "Smoke Test Clinic"},
+            },
+            headers=auth,
+        )
+        check("POST /api/notifications/send without keys -> 501", s == 501, f"(got {s})")
 
     # --- voice: call-completed needs the service token (enforcement) ---------
     s, j = request(

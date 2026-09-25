@@ -28,6 +28,22 @@ services:
       - CASHFREE_SECRET_KEY=${CASHFREE_SECRET_KEY:-}
       - CASHFREE_WEBHOOK_SECRET=${CASHFREE_WEBHOOK_SECRET:-}
       - PAYMENT_LINK_BASE_URL=${PAYMENT_LINK_BASE_URL:-http://localhost:8001}
+      # Notifications (G6-Q8, spec-notifications-q8.md): channel keys gate
+      # live dispatch (501 without); empty = hooks record status=queued.
+      - WHATSAPP_TOKEN=${WHATSAPP_TOKEN:-}
+      - WHATSAPP_PHONE_ID=${WHATSAPP_PHONE_ID:-}
+      - KNOWLARITY_SMS_TOKEN=${KNOWLARITY_SMS_TOKEN:-}
+      - KNOWLARITY_SMS_SENDER_ID=${KNOWLARITY_SMS_SENDER_ID:-}
+      - MSG91_AUTH_KEY=${MSG91_AUTH_KEY:-}
+      - MSG91_SENDER_ID=${MSG91_SENDER_ID:-}
+      - MSG91_ROUTE=${MSG91_ROUTE:-4}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-noreply@medicall.in}
+      - FCM_SERVER_KEY=${FCM_SERVER_KEY:-}
+      - FCM_SENDER_ID=${FCM_SENDER_ID:-}
     depends_on:
       postgres:
         condition: service_healthy

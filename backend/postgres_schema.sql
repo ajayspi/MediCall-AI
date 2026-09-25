@@ -168,6 +168,26 @@ CREATE TABLE call_sessions (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Notifications (spec-notifications-q8.md G6-Q8): WhatsApp-first delivery
+-- records for the DPDP audit trail. status: queued / sent / failed; channel:
+-- whatsapp / sms / email / push; provider: meta / knowlarity / msg91 / smtp /
+-- fcm. params holds the JSON-encoded template params.
+CREATE TABLE notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    clinic_id UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL, -- payment_link, appointment_reminder, no_show_followup, otp, payment_receipt
+    recipient TEXT NOT NULL, -- phone for whatsapp/sms/push; email address for email
+    language TEXT DEFAULT 'en', -- hi/en/ta/te/bn
+    params TEXT, -- JSON-encoded template params
+    channel TEXT,
+    provider TEXT,
+    provider_ref TEXT,
+    status TEXT DEFAULT 'queued', -- queued, sent, failed
+    template TEXT, -- rendered message at send time
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    sent_at TIMESTAMPTZ
+);
+
 -- Indexes for call center performance (critical for high-concurrency workload)
 CREATE INDEX idx_calls_clinic ON calls(clinic_id);
 CREATE INDEX idx_calls_state ON calls(state);
@@ -183,12 +203,19 @@ CREATE INDEX idx_clinic_users_user ON clinic_users(user_id);
 CREATE INDEX idx_users_role ON users(role) WHERE is_active = TRUE;
 CREATE INDEX idx_call_embeddings_call ON call_embeddings(call_id);
 CREATE INDEX idx_payments_clinic_status ON payments(clinic_id, status);
+CREATE INDEX idx_notifications_clinic_status ON notifications(clinic_id, status);
 
 -- Webhook idempotency (spec-payments.md Q4/A4a): at most one intent per
 -- gateway reference, so a replayed gateway webhook updates the same row.
 -- Partial index: manual intents (gateway_ref NULL) may repeat.
 CREATE UNIQUE INDEX uq_payments_gateway_ref ON payments(gateway_ref)
     WHERE gateway_ref IS NOT NULL;
+
+-- Delivery idempotency (spec-notifications-q8.md Q4/A4a): at most one row per
+-- provider reference (a provider delivery ID), so retries/replays never
+-- duplicate rows. Partial index: queued sends (provider_ref NULL) may repeat.
+CREATE UNIQUE INDEX uq_notifications_provider_ref ON notifications(provider_ref)
+    WHERE provider_ref IS NOT NULL;
 
 -- pgvector similarity search function: find calls with similar patterns
 CREATE OR REPLACE FUNCTION search_similar_calls(
@@ -432,6 +459,17 @@ CREATE POLICY payments_manage ON payments
         OR current_setting('app.service_request', true) = 'on'
     );
 
+-- Notifications: clinic staff read/send for their clinic; server-side sends
+-- (the payment-create hook and the manual endpoint) write under the service
+-- bypass via service_request_ctx() — mirrors payments_manage (G6-Q8 Q4/A4a).
+CREATE POLICY notifications_send ON notifications
+    FOR ALL USING (
+        clinic_id IN (
+            SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
+        )
+        OR current_setting('app.service_request', true) = 'on'
+    );
+
 -- Clinic memberships: users read their own rows; a clinic owner reads their
 -- clinic's rows; ONLY the server-side service path may INSERT them this phase
 -- (create_clinic assigns the creator's owner row; the future staff-add
@@ -469,6 +507,7 @@ GRANT ALL ON calls TO authenticated;
 GRANT ALL ON appointments TO authenticated;
 GRANT ALL ON prescriptions TO authenticated;
 GRANT ALL ON payments TO authenticated;
+GRANT ALL ON notifications TO authenticated;
 GRANT USAGE, SELECT ON sequence language_codes_id_seq TO authenticated;
 
 -- Grant permissions for the API runtime role (medicall_app) — identical surface
@@ -481,6 +520,7 @@ GRANT ALL ON calls TO medicall_app;
 GRANT ALL ON appointments TO medicall_app;
 GRANT ALL ON prescriptions TO medicall_app;
 GRANT ALL ON payments TO medicall_app;
+GRANT ALL ON notifications TO medicall_app;
 GRANT SELECT ON language_codes TO medicall_app;
 GRANT USAGE, SELECT ON sequence language_codes_id_seq TO medicall_app;
 

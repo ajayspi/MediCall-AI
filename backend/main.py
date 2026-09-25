@@ -13,6 +13,7 @@ from app.api import (
     auth,
     calls,
     clinics,
+    notifications,
     payments,
     prescriptions,
     voice,
@@ -54,6 +55,7 @@ app.include_router(calls.router)
 app.include_router(appointments.router)
 app.include_router(prescriptions.router)
 app.include_router(payments.router)
+app.include_router(notifications.router)
 app.include_router(
     auth.router, prefix="/api/auth", tags=["auth"]
 )

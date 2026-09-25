@@ -52,11 +52,20 @@ def py_tree(path: Path):
 
 
 def fn_block(text: str, name: str) -> str:
-    """Slice a function's source block via AST offsets (established helper)."""
-    tree = ast.parse(text)
+    """The source text of one function (via AST line offsets), or ''.
+
+    Slices by LINE, not by character offset: splitlines(keepends=True) keeps
+    each line intact so text[node.lineno-1:node.end_lineno] spans the def line
+    down to the function's last line (same helper as test_auth_enforcement).
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return ""
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
-            return text[node.lineno - 1 : node.end_lineno]
+            lines = text.splitlines(keepends=True)
+            return "".join(lines[node.lineno - 1 : node.end_lineno])
     return ""
 
 
@@ -380,8 +389,9 @@ class TestRequestShapes(unittest.TestCase):
 
     def test_push_payload_shape(self):
         shape = ntf.build_push_payload("Reminder", {"clinic": "QuickCare"})
-        self.assertEqual("Reminder", shape.get("title") or shape.get("body"))
-        self.assertIn("clinic", str(shape))
+        self.assertEqual("MediCall", shape.get("title"))
+        self.assertEqual("Reminder", shape.get("body"))
+        self.assertIn("clinic", str(shape), "push payload must carry the template params")
 
 
 class TestSchemaTable(unittest.TestCase):
@@ -484,8 +494,8 @@ class TestSmokeDocsRefs(unittest.TestCase):
         self.assertIn("/api/notifications", read(BACKEND / "scripts" / "smoke_api.py"))
 
     def test_api_contracts_doc(self):
-        docs = BACKEND / "docs"
-        self.assertIn("/api/notifications", read(docs / "03-api-contracts.md"))
+        contracts = BACKEND.parent / "docs" / "uml" / "03-api-contracts.md"
+        self.assertIn("/api/notifications", read(contracts))
 
     def test_env_example_has_canonical_keys(self):
         env_text = read(BACKEND / ".env.example")
