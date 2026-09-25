@@ -10,6 +10,7 @@ flowchart LR
     Client --> Prescriptions
     Client --> Payments
     Client --> Notifications
+    Client --> Admin
 
     Auth["/api/auth<br/>POST /api/auth/register<br/>POST /api/auth/login<br/>POST /api/auth/otp/request<br/>POST /api/auth/otp/verify<br/>GET /api/auth/me (Bearer)<br/>POST /api/auth/logout<br/>GET /api/auth/providers<br/>POST /api/auth/oauth/{provider}<br/>SSO = 501 until env keys (google / microsoft / abha)"]
     Voice["/api/voice (prefix applied in main.py)<br/>POST /webhook/exotel<br/>POST /webhook/knowlarity<br/>POST /webhook/twilio<br/>POST /livekit-agent-start<br/>POST /call-completed"]
@@ -21,11 +22,13 @@ flowchart LR
     Notifications["/api/notifications<br/>GET /api/notifications<br/>POST /api/notifications/send"]
     Compliance["/api/compliance<br/>GET /api/compliance (filters: clinic_id, status)<br/>POST /api/compliance/events<br/>PATCH /api/compliance/events/{event_id}"]
     Analytics["/api/analytics<br/>GET /api/analytics/volume<br/>GET /api/analytics/resolution<br/>GET /api/analytics/triage<br/>GET /api/analytics/language<br/>GET /api/analytics/no-show<br/>GET /api/analytics/revenue<br/>GET /api/analytics/delivery<br/>GET /api/analytics/benchmarks"]
+    Admin["/api/admin<br/>GET /api/admin (overview)<br/>GET /api/admin/clinics<br/>GET /api/admin/patients<br/>GET /api/admin/revenue<br/>GET /api/admin/calls (limit 1..200)<br/>platform_admin role only"]
 
     StateGuard["PATCH /api/calls/{call_id}/state<br/>409 on invalid transition (STATE_TRANSITIONS)"]
     StatusGuard["PATCH .../status (appointment / prescription / payment)<br/>422 on invalid status value"]
     ConsentGuard["POST /api/calls/{id}/consent<br/>422 on non unknown/granted/denied<br/>compliance_events deadline = detected_at + 72h (DPDP)"]
     PeriodGuard["GET /api/analytics/*<br/>422 on from > to / range > 366d / unparseable<br/>defaults: last 30 days"]
+    AdminGuard["GET /api/admin/*<br/>403 without platform_admin role<br/>422 on limit outside 1..200"]
     NotFound["All {id} lookups<br/>404 on missing row"]
 ```
 
@@ -34,7 +37,7 @@ flowchart LR
 - Three routers (clinics, calls, appointments, prescriptions, payments — five
   modules) each declare `APIRouter(prefix="/api/<name>")`; `voice` is registered
   with the `/api/voice` prefix and `auth` with `prefix="/api/auth"` in `main.py`
-  (all ten routers included).
+  (all eleven routers included).
 - This endpoint set is the executable contract in
   `backend/tests/test_api_routes.py` (`EXPECTED_ENDPOINTS`) and the basis for the
   Docker/CI HTTP smoke tests.
@@ -101,3 +104,14 @@ flowchart LR
   calls/appointments/payments/notifications riding their RLS, zero schema
   writes; period = optional from/to (default last 30 days, 366-day cap,
   422 on bad order/over-cap/unparseable, naive assumed UTC).
+- **Admin (G6-Q11 wired, spec-frontend-wiring-q11.md): the platform superuser
+  surface** — the 11th router (`/api/admin`), FIVE read-only GETs (overview,
+  clinics, patients, revenue, calls) each gated
+  `Depends(require_roles("platform_admin"))` (403 for every clinic role; the
+  role is seeded via the demo tenant `platform@medicall.in`, never
+  self-served). The aggregate reads arm `service_request_ctx()` (the
+  auth-CRUD pattern) so they read across tenants, and `clinic_staff_read`
+  FOR SELECT gained the matching `app.service_request = 'on'` OR-clause.
+  `/api/admin/calls` takes `limit` (1..200, 422 otherwise). Frontend admin
+  pages (overview / live-monitor / clinics / patients / revenue) call these;
+  the platform patient list derives from `/api/calls` client-side.

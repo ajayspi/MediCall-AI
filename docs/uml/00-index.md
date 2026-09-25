@@ -8,7 +8,7 @@ Verified by `backend/tests/test_uml_diagrams.py` (stdlib, source-level).
 |---|---------|------|------------------------|
 | 01 | Entity–Relationship (9 tables, FK edges) | [01-er.md](01-er.md) | `backend/postgres_schema.sql` |
 | 02 | Call state machine (9 states, 22 transitions) | [02-state-machine.md](02-state-machine.md) | `backend/app/models/call.py` (`CallState` + `STATE_TRANSITIONS`) |
-| 03 | API contracts (6 routers, 21 endpoints) | [03-api-contracts.md](03-api-contracts.md) | `backend/app/api/*.py` + `backend/tests/test_api_routes.py` |
+| 03 | API contracts (11 routers, 53 endpoints) | [03-api-contracts.md](03-api-contracts.md) | `backend/app/api/*.py` + `backend/tests/test_api_routes.py` |
 | 04 | Voice pipeline data flow | [04-data-flow.md](04-data-flow.md) | `backend/app/api/voice.py` + `backend/app/services/` |
 | 05 | Deployment (Docker Compose stack + SaaS) | [05-deployment.md](05-deployment.md) | `docker-compose.yml` |
 | 06 | Inbound call lifecycle (sequence) | [06-call-lifecycle.md](06-call-lifecycle.md) | `backend/app/api/voice.py` + `backend/app/models/call.py` |

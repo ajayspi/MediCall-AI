@@ -92,7 +92,7 @@ Not specified anywhere yet, each needs a decision before build:
 - **G6-Q1 Auth**: Full incl. ABHA login (OTP + password + Google/Microsoft SSO + ABHA).
 - **G6-Q6 Telephony**: Multiple fallback sources — wire Exotel + Knowlarity + Twilio India all with fallback chain, no single primary.
 - **G6-Q7 EHR/ABDM**: Transcript only for Phase 1 (no EHR writes; calls/appointments/prescriptions local only).
-- **G6-Q9/Q10**: Q9 (KPIs/analytics) → **DONE on `g-kpis`**; Q10 (deploy topology) still open — answer before its build session. (Q3 guardrails → DONE `c01bbac`; Q5 payments → DONE `4812795`; Q8 notifications → DONE on `g-notify`; Q4 languages → DONE on `g-languages`; Q2 consent/DPDP → DONE on `g-dpdp`.)
+- **G6-Q9/Q10/Q11**: Q9 (KPIs/analytics) → **DONE on `g-kpis`**; Q10 (deploy topology) → **DONE on `g-deploy`**; Q11 (frontend wiring + platform admin) → **DONE on `g-ui-wired`**. (Q3 guardrails → DONE `c01bbac`; Q5 payments → DONE `4812795`; Q8 notifications → DONE on `g-notify`; Q4 languages → DONE on `g-languages`; Q2 consent/DPDP → DONE on `g-dpdp`.)
 - **Next**: fresh session, one task, starting with G1+G2 (make the app import: fix `main.py`, rewrite `postgres.py` so it parses).
 
 ## Implementation Record — G1+G2 DONE (2026-09-23)
@@ -823,5 +823,49 @@ Not specified anywhere yet, each needs a decision before build:
   phase that changes the documented stack must update the contract suite in the
   same commit (test_uml_diagrams redis token + 6379 port) or the
   full-regression gate goes red.
+- **G6-Q11 FRONTEND WIRING DONE (g-ui-wired, off g-deploy tip `51c4ece`; spec
+  `f7c25b2` APPROVED 2026-09-26 (question tool, scope A3) → RED same commit
+  (test_frontend_wiring_q11.py, 19 tests/5 classes — 13 fail) → feat `35e7be7`
+  → docs tip; regression **580/580** (561 + 19), compileall 0)** — sign-off
+  (2026-09-26, question tool): Q1=A3 (**full platform build** — wire the 5
+  clinic + 5 admin pages to live endpoints, add a role-gated `/api/admin`
+  router with platform aggregates, patients derive from `/api/calls`), Q2=A1
+  (**`platform_admin` role weight 6**, above owner; seeded via the demo tenant
+  `platform@medicall.in` / `+919876543211` / `DemoPass!2026`, `ON CONFLICT DO
+  NOTHING`, owner's pbkdf2 hash reused; `register()` cannot grant it),
+  Q3=A1 (**aggregates ride `app.service_request`** — each platform fn arms
+  `service_request_ctx()` internally, the auth-CRUD pattern; `clinic_staff_read`
+  FOR SELECT gains the service OR-clause), Q4=A1 (**exactly 5 admin GETs**, all
+  `Depends(require_roles("platform_admin"))`, 422 on limit outside 1..200),
+  Q5=A1 (**clinic patients = recent callers** from `/api/calls?limit=200`,
+  grouped client-side by `caller_number`), Q6=A1 (**doctors/billing/
+  infrastructure/audit stay mock** with a literal "no backend entity" note — no
+  tables exist for them). Delivered: `services/auth.py` ROLE_WEIGHTS 6;
+  `postgres_schema.sql` policy OR-clause + `platform@medicall.in` seed;
+  `app/db/postgres.py` 5 platform aggregates (`platform_overview` /
+  `platform_clinics` / `platform_patients` / `platform_revenue` /
+  `platform_calls`) + `TERMINAL_STATES`; `app/api/admin.py` (11th router);
+  `main.py` 11th `include_router`; `src/lib/api.ts` authFetch + 10 hooks
+  (useTriageQueue/useAppointments/usePrescriptions/useAnalyticsKpis/
+  useRecentCallers + useAdminOverview/AdminClinics/AdminPatients/AdminRevenue/
+  AdminLiveCalls) with USE_MOCK auto/true/false fallback identical to
+  useTodayCalls + formatINR (Indian grouping; suite pins no `$[0-9]` in src);
+  10 pages converted to "use client" + `@/lib/api` (mock fixtures stay in
+  components/mock as hook fallback, `+91`/`₹` intact); 4 admin pages keep mock +
+  the note. Contract updates: `test_api_routes.py` 6→11 routers +
+  `EXPECTED_ENDPOINTS["admin"]` (Q10 lesson — same commit as feat);
+  `03-api-contracts.md` Admin node/edge + AdminGuard + eleven-routers note;
+  `00-index.md` count 6 routers/21 endpoints → 11 routers/53 endpoints
+  (test_uml_diagrams API_PATHS is a STATIC tuple — no uml-suite change
+  needed). Baseline moved 561 → 580.
+- **Gotchas (one-line rules, Q11)**: react-query hooks in a server component
+  break the Next build — every converted page got `"use client"` although no
+  suite pins it. `Math.max(...hourlyCalls)` div-by-zero on an all-zero live day
+  → `Math.max(1, ...hourlyCalls)`. test_uml_diagrams.API_PATHS does NOT
+  auto-grow from EXPECTED_ENDPOINTS (static tuple) — docs edits stay additive
+  there, but the Q10 lesson (contract suite in the SAME commit as the feat)
+  still applies to test_api_routes when a router lands. The 4 entity-less admin
+  pages must keep `@/components/mock`, avoid `@/lib/api`, AND carry the literal
+  note — the suite pins all three.
 - **Next**: live provider round-trips behind CI secrets → run the ci.yml stack
   job on a Docker host → merge branch tips to main (G6 fully answered).

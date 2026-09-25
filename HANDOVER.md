@@ -239,6 +239,23 @@ is the launchpad.
   feat `1f1411c` → docs tip). Proof: `tests/test_deploy_q10.py` 42/42 GREEN;
   regression **561/561** (519 + 42); compileall 0. **G6 fully answered**;
   test_uml_diagrams deployment contract updated (redis/6379 → 3-service stack).
+- ✅ **FRONTEND WIRING (G6-Q11) DONE** — complete the UI: **13 of 17 pages
+  live** (sign-off 2026-09-26, question tool, scope A3), Q1=A3 (wire the 5
+  clinic + 5 admin pages to real endpoints; live-calls/dashboard stay wired),
+  Q2=A1 (`platform_admin` role weight 6, seeded `platform@medicall.in` /
+  `+919876543211` / `DemoPass!2026`, never self-served), Q3=A1 (platform
+  aggregates ride `app.service_request` — auth-CRUD pattern; `clinic_staff_read`
+  FOR SELECT gains the service OR-clause), Q4=A1 (5 admin GETs, all
+  `require_roles("platform_admin")`), Q5=A1 (clinic patients = recent callers
+  grouped client-side off `/api/calls?limit=200`), Q6=A1 (doctors/
+  billing/infrastructure/audit stay mock with a "no backend entity" note — no
+  tables exist). Branch `g-ui-wired` off `g-deploy` tip `51c4ece` (spec
+  `f7c25b2` APPROVED → RED same commit — 19 tests 13 fail → feat `35e7be7` →
+  docs tip). api.ts: authFetch + 10 hooks + formatINR; pages are "use client"
+  pulling `@/lib/api`; mock fixtures stay in components/mock as hook fallback
+  (USE_MOCK auto/true/false), `+91`/`₹` intact. Proof:
+  `tests/test_frontend_wiring_q11.py` 19/19 GREEN; regression **580/580**
+  (561 + 19); compileall 0.
 - ▶️ **NEXT: live provider round-trips behind CI secrets** (Deepgram/
   ElevenLabs/OpenAI + LiveKit rooms + real gateway SDK dispatch + signed
   webhook end-to-end) and **run the ci.yml stack job on a Docker host** (RLS/
@@ -268,10 +285,10 @@ is the launchpad.
   (no KPI tables, no caching); market benchmarks are display-only constants.
 
 ## 4. Still open (answer before the session that needs them)
-None — G6 (idea refinement gap audit) is fully answered: all 10 questions DONE
-(branches g-auth … g-kpis, g-deploy). Next work: live provider round-trips
-behind CI secrets, run the ci.yml stack job on a Docker host, then merge
-branch tips to main.
+None — G6 (idea refinement gap audit) is fully answered: all 11 questions DONE
+(branches g-auth … g-kpis, g-deploy, g-ui-wired) and the frontend is **13 of 17
+pages live**. Next work: live provider round-trips behind CI secrets, run the
+ci.yml stack job on a Docker host, then merge branch tips to main.
 
 ## 5. Verify first (before any edit)
 ```
@@ -295,6 +312,7 @@ tree — keep it clean; each phase gets its own `.worktrees\<name>` branch via
 - `spec-dpdp-q2.md` — G6-Q2 consent + DPDP: per-call recording consent, retention policy, 72-hr breach flow, data localization + DPO (Q1–Q4 APPROVED; DONE)
 - `spec-kpis-q9.md` — G6-Q9 MVP KPIs + analytics: 7 per-KPI endpoints + market benchmarks (Q1=A3 Q2=A2 Q3=A1 Q4=A1; DONE)
 - `spec-deploy-q10.md` — G6-Q10 deploy topology: compose service list, Railway/Vercel region pin, env var catalog, purge schedule (Q1=A1 Q2=A1 Q3=A2 Q4=A3; DONE)
+- `spec-frontend-wiring-q11.md` — G6-Q11 frontend wiring + platform admin: 10 pages to live endpoints, /api/admin router, platform_admin role (Q1=A3 Q2=A1 Q3=A1 Q4=A1 Q5=A1 Q6=A1; DONE)
 - `spec-guardrails-q3.md` — G6-Q3 clinical guardrails (Q1–Q4 APPROVED; DONE)
 - `spec-docker-ci.md` — Docker/CI phase spec (Q1 local+CI, Q2 client+2 pages, Q3 3-job workflow; DONE)
 - `spec-auth.md` — AuthN/Z (G6-Q1) + local-schema repair (Q1–Q4 APPROVED; DONE)
