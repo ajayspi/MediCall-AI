@@ -1,17 +1,40 @@
-# G6-Q2 Consent + DPDP — spec (DRAFT)
+# G6-Q2 Consent + DPDP — spec (APPROVED)
 
 | | |
 |---|---|
 | **Phase** | G6-Q2: consent & DPDP Act 2023 layer — per-call recording consent flag, retention policy, 72-hr breach flow, data-localization/DPO posture |
 | **Tracker question** | "Consent & DPDP Act 2023: per-call recording consent flag, data localization, 72-hr breach flow, retention policy?" |
 | **Branch** | `g-dpdp` off `g-languages` tip `af63e3c` |
-| **Status** | **DRAFT** — awaiting question-tool sign-off |
+| **Status** | DRAFT → **APPROVED** (signed off 2026-09-25, question tool, Q1=A1 Q2=A1 Q3=A1 Q4=A1) |
 | **Date** | 2026-09-25 |
 
-## 0. Sign-off record (pending)
+## 0. Sign-off record (2026-09-25, question tool)
 
-- Q1=—, Q2=—, Q3=—, Q4=— (question tool, 2026-09-25)
-- Test-first (RED → GREEN); stdlib-only; full regression must stay 426 baseline + new.
+- **Q1=A1** — **flag on calls**: `calls.recording_consent TEXT NOT NULL DEFAULT
+  'unknown'` (unknown/granted/denied) + stdlib `app/services/consent.py`
+  (5-language yes/no in-call parse `parse_consent_response(text, language)` →
+  granted/denied/None; `recording_allowed(consent)` egress gate) +
+  identity-gated `POST /api/calls/{id}/consent`. No new table; rides existing
+  `calls` RLS (`calls_update` membership OR service_request).
+- **Q2=A1** — **config + purge service**: stdlib `app/services/retention.py`
+  `RETENTION_DAYS` (calls 365, recordings 365, notifications 180, audit 2190)
+  with per-kind env overrides + tz-aware `retention_deadline()` +
+  `purge_expired()` DELETE service wired for the Docker/CI cron (execution
+  deferred). Recordings = external MinIO objects → documented posture + env
+  constant only.
+- **Q3=A1** — **compliance_events table + API**: new tenant table (type
+  data_breach/consent_withdrawal/gdpr_request, severity, status
+  open/reported/closed, detected_at, notification_deadline = detected +
+  `DPDP_BREACH_NOTIFICATION_HOURS` default 72, reported_at) + `compliance_manage`
+  policy (mirrors `notifications_send`) + identity-gated `/api/compliance`
+  router (POST/GET/PATCH). DPB dispatch via the Q8 email channel is a noted
+  follow-on; no new notification kind.
+- **Q4=A1** — **config constants**: `DATA_RESIDENCY_REGION` env (default "in")
+  + `DPO_NAME`/`DPO_EMAIL` env surfaced by `compliance.py`
+  (`data_residency()`, `dpo_contact()`); documented posture; region pin owned
+  by Q10.
+- Test-first (RED → GREEN); stdlib-only; full regression must stay 426 baseline
+  + new.
 
 ## 1. Why now (evidence from the current surface)
 
