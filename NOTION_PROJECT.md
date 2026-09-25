@@ -131,8 +131,9 @@ MediCall-AI/
 DATABASE_URL=postgresql://user:pass@localhost:5432/medicall
 PGVECTOR_DIMENSIONS=1536
 
-# Redis
-REDIS_URL=redis://localhost:6379
+# Cache (future stub — no callers; Upstash REST, per app/db/redis.py)
+UPSTASH_REDIS_REST_URL=xxx
+UPSTASH_REDIS_REST_TOKEN=xxx
 
 # Telephony (Multi-provider)
 EXOTEL_API_KEY=xxx

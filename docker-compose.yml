@@ -1,15 +1,19 @@
-version: '3.8'
-
+# MediCall AI — deploy stack (G6-Q10, spec-deploy-q10.md).
+# Services: postgres (pgvector) + backend + frontend. The cache client
+# (backend/app/db/redis.py) has ZERO callers — redis was dropped from the stack
+# (Q1=A1); the pip pin + Upstash env vars are kept as a documented stub.
+# backend builds from the REPO ROOT (context: .) so docker compose and Railway
+# share one Dockerfile (Q2=A1); the root .dockerignore keeps the context lean.
 services:
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     ports:
       - "0.0.0.0:8001:8000"
     environment:
-      - DATABASE_URL=postgresql://medicall_app:medicall_app@postgres:5432/medicall
-      - REDIS_URL=redis://redis:6379
+      # asyncpg scheme REQUIRED by create_async_engine (postgres.py).
+      - DATABASE_URL=postgresql+asyncpg://medicall_app:medicall_app@postgres:5432/medicall
       - FRONTEND_URL=${FRONTEND_URL}
       - AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-dev-secret-change-me}
       - WEBHOOK_SERVICE_TOKEN=${WEBHOOK_SERVICE_TOKEN:-dev-service-token}
@@ -44,10 +48,20 @@ services:
       - SMTP_FROM=${SMTP_FROM:-noreply@medicall.in}
       - FCM_SERVER_KEY=${FCM_SERVER_KEY:-}
       - FCM_SENDER_ID=${FCM_SENDER_ID:-}
+      # DPDP Act 2023 (G6-Q2 -> G6-Q10): DATA_RESIDENCY_REGION is PINNED to
+      # "in" (documented posture — provider home is Railway asia-southeast1
+      # "nearest available" + frontend at Vercel bom1/Mumbai, see
+      # docs/DEPLOYMENT.md). Retention days + DPO stay env-overridable.
+      - DATA_RESIDENCY_REGION=in
+      - DPDP_BREACH_NOTIFICATION_HOURS=${DPDP_BREACH_NOTIFICATION_HOURS:-72}
+      - RETENTION_CALLS_DAYS=${RETENTION_CALLS_DAYS:-365}
+      - RETENTION_RECORDINGS_DAYS=${RETENTION_RECORDINGS_DAYS:-365}
+      - RETENTION_NOTIFICATIONS_DAYS=${RETENTION_NOTIFICATIONS_DAYS:-180}
+      - RETENTION_AUDIT_DAYS=${RETENTION_AUDIT_DAYS:-2190}
+      - DPO_NAME=${DPO_NAME:-}
+      - DPO_EMAIL=${DPO_EMAIL:-}
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     networks:
       - medicall-local
@@ -99,23 +113,8 @@ services:
       retries: 5
       start_period: 10s
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    networks:
-      - medicall-local
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
 volumes:
   postgres-data:
-  redis-data:
 
 networks:
   medicall-local:

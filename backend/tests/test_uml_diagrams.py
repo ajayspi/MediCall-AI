@@ -19,8 +19,8 @@ GREEN after implementation:
 - 04-data-flow.md: Exotel/Knowlarity/Twilio-India -> voice.py webhooks ->
   LiveKit agent -> Deepgram STT / ElevenLabs TTS (hi/en/ta/te/bn) ->
   /call-completed -> update_call_transcript (Docker/CI TODO marked).
-- 05-deployment.md: the docker-compose.yml stack (frontend/backend/postgres/
-  redis) + external SaaS (LiveKit, Deepgram, ElevenLabs, OpenAI, telephony).
+- 05-deployment.md: the docker-compose.yml stack (frontend/backend/postgres)
+  + external SaaS (LiveKit, Deepgram, ElevenLabs, OpenAI, telephony).
 - 06-call-lifecycle.md: sequenceDiagram of one inbound call through the state
   machine including the PAYMENT_SENT/PAYMENT_EXPIRED loop.
 - No restaurant/TalkByte leftovers in any of the 7 new files.
@@ -124,7 +124,6 @@ DEPLOYMENT_TOKENS = (
     "frontend",
     "backend",
     "postgres",
-    "redis",
     "docker-compose",
     "LiveKit",
     "Deepgram",
@@ -371,7 +370,7 @@ class TestDeploymentDiagram(unittest.TestCase):
     def test_ports_match_compose(self):
         text = read(UML_DIR / "05-deployment.md")
         compose = read(COMPOSE)
-        for port in ("8001", "3000", "5432", "6379"):
+        for port in ("8001", "3000", "5432"):
             self.assertIn(port, text, f"deployment missing port {port}")
             self.assertIn(port, compose, f"docker-compose.yml missing port {port}")
 

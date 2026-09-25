@@ -66,6 +66,9 @@ docker-compose.override.yml
 # Railway
 .railway/
 
+# Git worktrees (phase branches live in .worktrees/ off this repo)
+.worktrees/
+
 # Temporary files
 *.tmp
 *.temp

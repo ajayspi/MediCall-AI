@@ -1,0 +1,28 @@
+# G6-Q10 retention purge schedule (closes G6-Q2's deferred "Docker/CI cron"):
+# runs the one-shot purger (backend/scripts/purge_expired.py) daily at 03:00
+# UTC against the docker compose stack (postgres+pgvector / backend /
+# frontend). Manual runs: workflow_dispatch.
+name: Purge
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  purge:
+    name: Retention purge (purge_expired)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose up (postgres + backend)
+        run: docker compose up -d --build postgres backend
+      - name: Wait for backend health
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8001/health && break || sleep 2
+          done
+      - name: Run retention purge
+        run: docker compose run --rm backend python scripts/purge_expired.py
+      - name: Teardown
+        run: docker compose down -v

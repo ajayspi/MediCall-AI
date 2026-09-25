@@ -1,3 +1,11 @@
+# G6-Q10 deploy topology: Railway config-as-code. DEPRECATED by Railway
+# (legacy services to 2026-12-01; see docs/DEPLOYMENT.md for the IaC note).
+# Region pin: Railway has NO Mumbai region as of 2026-09-25 (4 Metal regions:
+# us-west2 / us-east4-eqdc4a / europe-west4-drams3a / asia-southeast1-eqsg3a;
+# docs.railway.com/deployments/regions) — asia-southeast1 is the nearest
+# available; the frontend runs at Vercel bom1 (Mumbai). railway.json mirrors
+# this config (DOCKERFILE builder + deploy.region). Secrets (DATABASE_URL,
+# keys) go to the Railway dashboard, never the repo.
 [build]
 builder = "dockerfile"
 dockerfilePath = "backend/Dockerfile"
@@ -7,8 +15,15 @@ healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
+region = "asia-southeast1"
 
 [env]
 ENVIRONMENT = "production"
 DEBUG = "false"
 LOG_LEVEL = "info"
+DATA_RESIDENCY_REGION = "in"
+DPDP_BREACH_NOTIFICATION_HOURS = "72"
+RETENTION_CALLS_DAYS = "365"
+RETENTION_RECORDINGS_DAYS = "365"
+RETENTION_NOTIFICATIONS_DAYS = "180"
+RETENTION_AUDIT_DAYS = "2190"
