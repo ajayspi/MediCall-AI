@@ -260,6 +260,7 @@ class PvExportRequest(BaseModel):
     format: str = "csv"  # csv (flat E2B) or json (grouped E2B)
     status: str = ""
     serious_only: bool = False
+    case_id: str = ""  # optional: restrict the export to ONE case (detail-page download)
 
 
 class ProductResponseCreate(BaseModel):
@@ -926,11 +927,21 @@ async def export_pv_ep(data: PvExportRequest, user=Depends(get_current_user)):
     fmt = (data.format or "csv").lower()
     if fmt not in ("csv", "json"):
         raise HTTPException(status_code=422, detail=f"invalid format: {data.format}")
-    rows = await list_adverse_events(
-        clinic_id=_uuid(data.clinic_id, "clinic_id"),
-        status=data.status or None,
-        serious_only=data.serious_only,
-    )
+    if data.case_id:
+        # Single-case export (the PVOIC detail page): overrides the clinic
+        # filter entirely — this row, or a clear 404. Same lookup + RLS as the
+        # singular case route, so a case from another clinic cannot leak here.
+        cid = _uuid(data.case_id, "case_id")
+        row = await get_adverse_event(cid)
+        if row is None:
+            raise HTTPException(status_code=404, detail=CASE_NOT_FOUND_DETAIL)
+        rows = [row]
+    else:
+        rows = await list_adverse_events(
+            clinic_id=_uuid(data.clinic_id, "clinic_id"),
+            status=data.status or None,
+            serious_only=data.serious_only,
+        )
     bundles = [build_e2b_case(_case_row(row)) for row in rows]
     if fmt == "json":
         return {"format": "json", "count": len(bundles), "cases": bundles}

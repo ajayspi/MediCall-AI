@@ -121,16 +121,15 @@ export default function PvCaseDetailPage() {
     run("E2B XML", () => authDownload(`/api/pv/cases/${id}/e2b.xml`), `e2b-${id}.xml`);
 
   // The batch export is the ONE JSON/CSV contract the API has
-  // (POST /api/pv/export, PvExportRequest). It is scoped by clinic_id and
-  // optional status - it has no case_id - so what these two produce is the
-  // clinic's interchange file, filtered to this case's status, not a one-row
-  // file. That is the contract this slice reuses as-is rather than replacing.
+  // (POST /api/pv/export, PvExportRequest). Since 2.6 it accepts an optional
+  // case_id that restricts the export to exactly this case (404 if missing);
+  // the clinic filter and status are ignored when case_id is set.
   const downloadBatch = (format: "json" | "csv") =>
     run(format.toUpperCase(), () =>
       authDownloadPost("/api/pv/export", {
         clinic_id: row.clinicId || clinicId(),
+        case_id: id,
         format,
-        status: row.status,
       }),
     `pv-e2b-export.${format}`);
 
