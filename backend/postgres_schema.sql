@@ -277,6 +277,20 @@ CREATE TABLE IF NOT EXISTS adverse_events (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Slice 2C: the coding layer + WHO-UMC causality capture. Added to the existing
+-- table, not as a second one, so a case keeps exactly one row. Every ALTER is
+-- idempotent: this file is applied to databases that predate the slice.
+-- coding_json holds the dictionary result verbatim (which dictionary, the PT
+-- code/SOC/HLT, the drug code) as captured by app/services/coding.py; the
+-- reporter's CATEGORY sits beside Phase 1's verbatim causality_reporter, and
+-- the reviewer's category, identity and moment are the stamp the expedited
+-- export gate (app/services/e2b.py) requires before an ICSR can be built.
+ALTER TABLE adverse_events ADD COLUMN IF NOT EXISTS coding_json JSONB;
+ALTER TABLE adverse_events ADD COLUMN IF NOT EXISTS reporter_causality TEXT;
+ALTER TABLE adverse_events ADD COLUMN IF NOT EXISTS reviewer_causality TEXT;
+ALTER TABLE adverse_events ADD COLUMN IF NOT EXISTS reviewed_by TEXT;
+ALTER TABLE adverse_events ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+
 -- Product quality complaint. investigation_status follows the strictly
 -- forward-only state machine in app/services/pharmacovigilance.py
 -- (captured -> investigating -> disposition -> capa); capa is terminal.

@@ -36,9 +36,12 @@ system: a PVOIC signs off and sends. Slice 2A generates; it never submits.
 A STDLIB-ONLY leaf (json / hashlib / xml.etree.ElementTree / dataclasses /
 typing) like app/services/pharmacovigilance.py, so every rule here is
 headless-testable with no database, no network and no keys. It imports exactly
-one sibling — the Phase-1 exporter whose group list is the contract, imported
+two siblings — the Phase-1 exporter whose group list is the contract, imported
 rather than copied so a group added there surfaces HERE as a failing test
-instead of as a silently missing element.
+instead of as a silently missing element; and slice 2C's coding service, which
+owns the human-in-the-loop rule (app/services/coding.py). Both imports exist so
+the export gate is ONE decision: a second copy of "an expedited case needs a
+reviewer stamp" would be free to drift from the one the PVOIC's screen enforces.
 """
 
 import json
@@ -47,6 +50,11 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Dict, Tuple
 
+from app.services.coding import (
+    REVIEW_GATE_DETAIL,
+    REVIEW_GATE_STATUS,
+    missing_review_stamp,
+)
 from app.services.pharmacovigilance import E2B_CASE_GROUPS, validate_minimum_criteria
 
 # ─── The envelope (every non-contract element, declared) ────────────────────
@@ -308,11 +316,23 @@ def e2b_export_block(case: Any) -> Tuple[int, str]:
     validator so the PVOIC sees the same list intake reported, in the same
     canonical order. The day-zero clock is unaffected: a serious case is already
     running, and chasing the missing elements is the fastest way to stop it.
+
+    An EXPEDITED case (serious, and not expected per the label) is
+    (REVIEW_GATE_STATUS, ...) naming the reviewer-stamp fields still missing —
+    slice 2C's human-in-the-loop gate, whose rule, field list and status live in
+    app/services/coding.py and are asked for here rather than restated. That
+    check comes after the minimum, never before it: an incomplete case is not an
+    ICSR at all, whatever its stamp says. A non-expedited case exports
+    unstamped — blocking one would train the desk to stamp cases reflexively.
     """
     row = dict(case or {})
     if not _clean(row.get("id")):
         return 404, CASE_NOT_FOUND_DETAIL
     if row.get("e2b_minimum_met"):
+        unstamped = missing_review_stamp(row)
+        if unstamped:
+            detail = f"{REVIEW_GATE_DETAIL}; missing: {', '.join(unstamped)}"
+            return REVIEW_GATE_STATUS, detail
         return E2B_EXPORTABLE
 
     _met, missing = validate_minimum_criteria(

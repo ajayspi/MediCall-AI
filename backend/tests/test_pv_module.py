@@ -1181,6 +1181,11 @@ PV_ROUTES = {
     ("post", "/responses"),
     ("get", "/responses"),
     ("post", "/inquiries/{inquiry_id}/answer"),
+    # Phase-2 slice 2C: the coding layer (dictionary-backed mapping) and the
+    # WHO-UMC causality capture. Both are staff actions on a case, so both are
+    # identity gated; the contracts live in test_coding.py.
+    ("post", "/cases/{case_id}/coding"),
+    ("post", "/cases/{case_id}/causality"),
 }
 
 SERVICE_GUARDED = ("create_pv_case_ep",)
@@ -1200,6 +1205,10 @@ IDENTITY_GATED = (
     "create_response_ep",
     "list_responses_ep",
     "answer_medical_inquiry_ep",
+    # Phase-2 slice 2C: coding and causality capture are the PVOIC's actions on
+    # a logged-in session — the intake path never codes and never assesses.
+    "code_pv_case_ep",
+    "capture_pv_case_causality_ep",
 )
 
 

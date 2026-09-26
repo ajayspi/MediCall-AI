@@ -704,6 +704,17 @@ class AdverseEvent(Base):
     expectedness: Mapped[Optional[str]] = mapped_column(String(40))
     # The reporter's own words about the suspect drug. Recorded, never produced.
     causality_reporter: Mapped[Optional[str]] = mapped_column(Text)
+    # Slice 2C: WHO-UMC causality CATEGORIES, captured not derived. The
+    # reporter's category sits beside the verbatim text above; the reviewer's
+    # category + identity + moment are the stamp the expedited export gate
+    # requires, and coding_json is the dictionary result as coded.
+    coding_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    reporter_causality: Mapped[Optional[str]] = mapped_column(String(30))
+    reviewer_causality: Mapped[Optional[str]] = mapped_column(String(30))
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(200))
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
     # FALSE = E2B minimum not yet met: stored and chased, never dropped.
     e2b_minimum_met: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(30), default="new")
@@ -1463,6 +1474,66 @@ async def list_adverse_events(
         if serious_only:
             rows = [r for r in rows if r.seriousness_flags]
         return rows[: max(1, min(limit, 200))]
+
+
+async def update_adverse_event_coding(
+    case_id: uuid.UUID, coding: Optional[dict] = None
+) -> bool:
+    """Store the coding result for a case. The caller MUST have coded it.
+
+    Only `coding` is written, so re-coding a case cannot clear the causality
+    stamp the export gate depends on. Returns True if a row was updated.
+    """
+    if coding is None:
+        return False
+    values: dict[str, Any] = {"coding_json": coding, "updated_at": now_tz()}
+    async with SessionFactory() as session:
+        stmt = (
+            update(AdverseEvent)
+            .where(AdverseEvent.id == case_id)
+            .values(**values)
+            .returning(AdverseEvent.id)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one_or_none() is not None
+
+
+async def update_adverse_event_causality(
+    case_id: uuid.UUID,
+    reporter_causality: Optional[str] = None,
+    reviewer_causality: Optional[str] = None,
+    reviewed_by: Optional[str] = None,
+    reviewed_at: Optional[datetime] = None,
+) -> bool:
+    """Store a validated WHO-UMC causality capture. The caller MUST have validated it.
+
+    Only what is passed is written, so a reporter-only capture cannot blank a
+    reviewer's stamp that is already on the case — and a capture the service
+    refused never reaches here at all. Returns True if a row was updated.
+    """
+    values: dict[str, Any] = {}
+    if reporter_causality is not None:
+        values["reporter_causality"] = reporter_causality
+    if reviewer_causality is not None:
+        values["reviewer_causality"] = reviewer_causality
+    if reviewed_by is not None:
+        values["reviewed_by"] = reviewed_by
+    if reviewed_at is not None:
+        values["reviewed_at"] = reviewed_at
+    if not values:
+        return False
+    values["updated_at"] = now_tz()
+    async with SessionFactory() as session:
+        stmt = (
+            update(AdverseEvent)
+            .where(AdverseEvent.id == case_id)
+            .values(**values)
+            .returning(AdverseEvent.id)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one_or_none() is not None
 
 
 async def create_quality_complaint(

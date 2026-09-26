@@ -41,6 +41,25 @@ app/services/medical_info.py; this router only fetches rows, passes them in and
 persists what comes back. The answer path NEVER creates a case: an inquiry whose
 words carry AE/PQC content is FLAGGED (suggest_report_to_pv) and the intake path
 owns the one-business-day handoff, so there is a single source of truth per case.
+
+Slice 2C added the coding layer and the WHO-UMC causality capture:
+
+  POST /api/pv/cases/{case_id}/coding        - code a case's event + product
+  POST /api/pv/cases/{case_id}/causality     - capture WHO-UMC causality
+
+Both are IDENTITY gated, because both write a clinical judgement onto a case.
+Coding is a LOOKUP, not an opinion: the terms the caller reported are mapped
+through whatever dictionary is installed, a miss is reported as a miss, and no
+code is ever invented. Causality is CAPTURED, not derived - the reporter's and
+the reviewer's own WHO-UMC assessments are validated against the scale and
+stored verbatim, and an unattributed review is refused rather than defaulted.
+Both rules live in the stdlib-only app/services/coding.py, so they are
+unit-testable with no database and no dictionary licence.
+
+The same module owns the EXPEDITED EXPORT GATE that both e2b routes already
+share: a serious case that was not expected per the label cannot become an ICSR
+until a named reviewer has stamped their own causality category on it. That
+stamp is what these two routes exist to write.
 """
 
 import base64
@@ -75,9 +94,18 @@ from app.db.postgres import (
     list_quality_complaints,
     list_responses,
     service_request_ctx,
+    update_adverse_event_causality,
+    update_adverse_event_coding,
     update_medical_inquiry_answer,
     update_quality_complaint,
     update_response_status,
+)
+from app.services.coding import (
+    causality_capture,
+    code_case,
+    get_dictionary,
+    is_expedited,
+    missing_review_stamp,
 )
 from app.services.e2b import (
     CASE_NOT_FOUND_DETAIL,
@@ -120,6 +148,10 @@ PV_E2B_EVENT = "pv_e2b_prepared"
 # Phase-2 slice 2D: who approved which wording, and what an enquirer was told.
 PV_RESPONSE_EVENT = "pv_response_approved"
 PV_INQUIRY_ANSWERED_EVENT = "pv_inquiry_answered"
+# Phase-2 slice 2C: a dictionary hit (or a reported miss) per case, and the
+# WHO-UMC causality assessment the reporter and the reviewer each stated.
+PV_CODED_EVENT = "pv_case_coded"
+PV_CAUSALITY_EVENT = "pv_causality_captured"
 
 
 # ─── Request models ─────────────────────────────────────────────────────────
@@ -169,6 +201,34 @@ class ComplaintUpdate(BaseModel):
     investigation_status: str = ""
     disposition: str = ""
     capa_ref: str = ""
+
+
+class PvCodingRequest(BaseModel):
+    """Code a case against the installed dictionary.
+
+    No terms: the text that gets coded is what the caller already reported on
+    the case, read by the service. Re-sending it here would let a code be
+    attached to words nobody said.
+    """
+
+    note: str = ""
+
+
+class PvCausalityCapture(BaseModel):
+    """One WHO-UMC causality capture, in the words of the humans who own it.
+
+    `reporters_assessment` is what the reporter stated, `reviewer_assessment`
+    what the reviewer stated. `reviewer` and `reviewed_at` are the reviewer's
+    identity and their own moment — both required whenever a reviewer assessment
+    is present, because an unattributed review is refused, never defaulted. No
+    field here is optional-with-a-fallback: this service has no clock and will
+    not invent an assessment to fill a gap.
+    """
+
+    reporters_assessment: str = ""
+    reviewer_assessment: str = ""
+    reviewer: str = ""
+    reviewed_at: str = ""
 
 
 class PvExportRequest(BaseModel):
@@ -274,6 +334,14 @@ def _case_row(p) -> dict:
         "seriousness_flags": p.seriousness_flags or [],
         "expectedness": p.expectedness,
         "causality_reporter": p.causality_reporter,
+        # Slice 2C: the WHO-UMC categories and the coding result. The three
+        # stamp fields travel with the row because the export gate decides on
+        # the SAME row the export is built from - one shape, no second fetch.
+        "reporter_causality": p.reporter_causality,
+        "reviewer_causality": p.reviewer_causality,
+        "reviewed_by": p.reviewed_by,
+        "reviewed_at": _iso(p.reviewed_at),
+        "coding": p.coding_json or {},
         "e2b_minimum_met": bool(p.e2b_minimum_met),
         "status": p.status,
         "received_at": _iso(p.received_at),
@@ -883,9 +951,10 @@ async def _e2b_case(case_id: str) -> tuple:
     """(case row, sender case id) for a stored case, or the gate's refusal.
 
     Returns (row, case, sender_case_id) on success; raises the gate's own
-    HTTPException otherwise, so both routes refuse a missing case (404) and a
-    case that cannot yet be an ICSR (422) from ONE decision, not two copies of
-    it.
+    HTTPException otherwise, so both routes refuse a missing case (404), a case
+    that cannot yet be an ICSR (422) and an expedited case with no reviewer
+    stamp (409 — REVIEW_GATE_STATUS in app/services/coding.py) from ONE
+    decision, not three copies of it.
     """
     cid = _uuid(case_id, "case_id")
     row = await get_adverse_event(cid)
@@ -893,8 +962,13 @@ async def _e2b_case(case_id: str) -> tuple:
     status, detail = e2b_export_block(case)
     if status == 404:
         raise HTTPException(status_code=404, detail=CASE_NOT_FOUND_DETAIL)
-    if status == 422:
-        raise HTTPException(status_code=422, detail=detail)
+    if status:
+        # The gate owns its status, raised verbatim and never remapped: 422 for
+        # a case that is not yet an ICSR, REVIEW_GATE_STATUS for an expedited
+        # case with no reviewer stamp, and whatever a future rule adds. Any
+        # non-zero refusal raises — an unrecognised one must never be mistaken
+        # for permission to export.
+        raise HTTPException(status_code=status, detail=detail)
     return row, case, str(cid)
 
 
@@ -974,6 +1048,171 @@ async def prepare_pv_case_e2b_submission_ep(case_id: str, user=Depends(get_curre
             "slice 2A: generated and staged for a PVOIC, not sent. The NCC-PvPI "
             "endpoint and MAH credentials are deployment configuration."
         ),
+    }
+
+
+# ─── Coding + WHO-UMC causality (identity-gated, slice 2C) ──────────────────
+# Two writes that put a clinical judgement on a case, so both need a logged-in
+# PVOIC - never the tokenless intake path, which only ever records what a caller
+# said.
+#
+# The rules are in app/services/coding.py: a case is mapped through whatever
+# dictionary is installed (a miss is reported as a miss, a code is never
+# invented), and a causality assessment is captured exactly as its author stated
+# it. This router fetches the row, passes it in, and persists what comes back -
+# which for a refused capture is nothing, because the refusal raises first.
+
+
+@router.post("/cases/{case_id}/coding")
+async def code_pv_case_ep(
+    case_id: str, data: PvCodingRequest, user=Depends(get_current_user)
+):
+    """Code a stored case's event term and suspect product. Nothing is inferred.
+
+    Identity gated: a code is a classification, so it is a PVOIC's action. The
+    words that get coded are the words the caller already reported on the case -
+    this route supplies no terms of its own, so a code can never be attached to
+    something nobody said.
+
+    A HIT is stored on the case and audited. A MISS is audited and stored
+    nowhere: an uncoded term stays uncoded until a dictionary covers it, and no
+    plausible-looking code is fabricated to fill the hole. A miss on the event
+    term refuses the WHOLE coding - the product is not reported either, so a
+    half-coded case can never be read downstream as a coded one. Once the event
+    term is coded, the product is looked up in its own right, and a product
+    miss leaves the event code standing.
+    """
+    cid = _uuid(case_id, "case_id")
+    row = await get_adverse_event(cid)
+    if row is None:
+        raise HTTPException(status_code=404, detail=CASE_NOT_FOUND_DETAIL)
+
+    result = code_case(_case_row(row), get_dictionary())
+    if result["coded"]:
+        await update_adverse_event_coding(cid, coding=result)
+
+    # Audited as pv_case_coded, hit or miss: the trail must show that the case
+    # WAS run through a dictionary and what came back, or a later reader cannot
+    # tell an uncoded case from a case nobody tried to code.
+    await create_compliance_event(
+        clinic_id=row.clinic_id,
+        event_type=PV_CODED_EVENT,
+        severity="low",
+        description=(
+            f"case run through dictionary={result['dictionary']}; "
+            f"coded={result['coded']} drug_coded={result['drug_coded']} "
+            f"reason={result['reason'] or 'hit'} stored={bool(result['coded'])}"
+        ),
+    )
+
+    return {
+        "status": "coded" if result["coded"] else "not_in_dictionary",
+        "case_id": str(cid),
+        "dictionary": result["dictionary"],
+        "coded": result["coded"],
+        "drug_coded": result["drug_coded"],
+        "reason": result["reason"],
+        "event": result["event"],
+        "drug": result["drug"],
+        "stored": bool(result["coded"]),
+        "note": (
+            "slice 2C: mapping only, no inference. A miss stores nothing and no "
+            "code is invented; a licensed dictionary can be installed later "
+            "without a change to this route."
+        ),
+    }
+
+
+@router.post("/cases/{case_id}/causality")
+async def capture_pv_case_causality_ep(
+    case_id: str, data: PvCausalityCapture, user=Depends(get_current_user)
+):
+    """Capture the WHO-UMC causality assessment the humans actually stated.
+
+    Identity gated: causality is a judgement, and it belongs to the reporter and
+    to the reviewing officer - not to this system. The service validates the
+    assessment against the WHO-UMC scale and stores it verbatim; it never
+    derives a category from seriousness, from the event text or from the coding
+    dictionary, and it never supplies a timestamp of its own for a review it
+    did not witness.
+
+    A REFUSED capture is a 422 and writes nothing at all - the reporter's half
+    does not survive either, so a rejected review cannot leave a partial
+    assessment on the case. On success the response says what the export gate
+    still wants, which is how a reviewer learns the case is now ready for an
+    ICSR (or what is still missing from the stamp).
+    """
+    cid = _uuid(case_id, "case_id")
+    row = await get_adverse_event(cid)
+    if row is None:
+        raise HTTPException(status_code=404, detail=CASE_NOT_FOUND_DETAIL)
+
+    case = _case_row(row)
+    captured = causality_capture(
+        reporters_assessment=data.reporters_assessment,
+        reviewer_assessment=data.reviewer_assessment,
+        reviewer=data.reviewer,
+        reviewed_at=data.reviewed_at,
+    )
+    if not captured["valid"]:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{captured['error']}: {captured['detail']}",
+        )
+
+    # The service already proved this is readable ISO-8601, so the parse only
+    # shapes it for the column. A value it cannot shape is left NULL, which
+    # leaves the export gate closed — the fail-closed direction, never a stamp
+    # that is not there.
+    reviewed_at = None
+    if captured["reviewed_at"]:
+        try:
+            reviewed_at = datetime.fromisoformat(captured["reviewed_at"])
+        except (TypeError, ValueError):
+            reviewed_at = None
+    await update_adverse_event_causality(
+        cid,
+        reporter_causality=captured["reporters_assessment"],
+        reviewer_causality=captured["reviewer_assessment"],
+        reviewed_by=captured["reviewed_by"],
+        reviewed_at=reviewed_at,
+    )
+
+    # Audited as pv_causality_captured: WHO-UMC, verbatim, attributed. This is
+    # the row that makes "who decided this was probable, and when" answerable
+    # months later without reconstructing the case.
+    await create_compliance_event(
+        clinic_id=row.clinic_id,
+        event_type=PV_CAUSALITY_EVENT,
+        severity="medium",
+        description=(
+            f"WHO-UMC causality captured on the {captured['scale']} scale; "
+            f"reporter={captured['reporters_assessment'] or '-'} "
+            f"reviewer={captured['reviewer_assessment'] or '-'} "
+            f"reviewed_by={captured['reviewed_by'] or '-'} "
+            f"reviewed_at={captured['reviewed_at'] or '-'} system_assigned=false"
+        ),
+    )
+
+    # What the export gate still needs, computed from the values just accepted.
+    case["reporter_causality"] = captured["reporters_assessment"]
+    case["reviewer_causality"] = captured["reviewer_assessment"]
+    case["reviewed_by"] = captured["reviewed_by"]
+    case["reviewed_at"] = captured["reviewed_at"]
+    return {
+        "status": "captured",
+        "case_id": str(cid),
+        "scale": captured["scale"],
+        "reporters_assessment": captured["reporters_assessment"],
+        "reporters_assessment_verbatim": captured["reporters_assessment_verbatim"],
+        "reviewer_assessment": captured["reviewer_assessment"],
+        "reviewed_by": captured["reviewed_by"],
+        "reviewed_at": captured["reviewed_at"],
+        "system_assigned": captured["system_assigned"],
+        "export_gate": {
+            "expedited": is_expedited(case),
+            "missing_review_stamp": missing_review_stamp(case),
+        },
     }
 
 

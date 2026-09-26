@@ -47,7 +47,14 @@ STDLIB_ROOTS = {
     "typing",
     "xml",
 }
-ALLOWED_APP_IMPORTS = {"app.services.pharmacovigilance"}
+ALLOWED_APP_IMPORTS = {
+    "app.services.pharmacovigilance",
+    # Phase-2 slice 2C: the export gate imports the reviewer-stamp rule from the
+    # coding layer rather than re-deriving it, so "what may be exported" stays one
+    # decision. Same rule as the Phase-1 import above: imported, not copied, so a
+    # change there surfaces here as a failing test.
+    "app.services.coding",
+}
 
 # Nothing in this slice may open a socket: no live submission (phase-2
 # non-goal — the PVOIC sends, from a validated environment, with MAH creds).
@@ -104,6 +111,15 @@ def sample_case() -> dict:
         "expectedness": "unexpected",
         "seriousness_flags": ["hospitalisation", "medically_important"],
         "causality_reporter": "मुझे लगता है दवा से हुआ",
+        # Phase-2 slice 2C: this case is serious AND unexpected, i.e. EXPEDITED, so
+        # it carries the reviewer stamp the export gate requires. The unstamped
+        # refusals live in test_coding.py (the gate's own suite) plus the
+        # TestE2BReviewGate class below.
+        "reporter_causality": "probable",
+        "reviewer_causality": "possible",
+        "reviewed_by": "safety.physician@medicall.in",
+        "reviewed_at": "2026-09-23T09:30:00+00:00",
+        "coding": None,
         "e2b_minimum_met": True,
         "status": "new",
         "received_at": "2026-09-22T04:15:00+00:00",
@@ -759,3 +775,70 @@ class TestE2BRouter(unittest.TestCase):
         for banned in ("requests", "httpx", "urllib"):
             with self.subTest(banned):
                 self.assertNotIn(banned, roots, "no live submission in slice 2A")
+
+
+# ─── H. The reviewer gate on the export path (phase-2 slice 2C) ─────────────
+# An EXPEDITED case — serious, and not expected per the approved label — must
+# carry a reviewer stamp before it may become an ICSR. The rule itself is owned by
+# app/services/coding.py and is behaviour-tested in test_coding.py; what is
+# asserted HERE is that slice 2A's two export routes sit inside that gate, so a
+# later change cannot open a third way out.
+class TestE2BReviewGate(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not HAVE_E2B:
+            require_e2b()
+        cls.text = read(PV_ROUTER)
+
+    def _unstamped(self, **overrides) -> dict:
+        case = sample_case()
+        for field in ("reviewer_causality", "reviewed_by", "reviewed_at"):
+            case[field] = ""
+        case.update(overrides)
+        return case
+
+    def test_shipped_fixture_case_is_exportable(self):
+        """The reviewed expedited case: stamped, so 2A's contract still holds."""
+        self.assertEqual(e2b_mod.E2B_EXPORTABLE, e2b_mod.e2b_export_block(sample_case()))
+
+    def test_expedited_case_without_a_stamp_is_refused(self):
+        status, detail = e2b_mod.e2b_export_block(self._unstamped())
+        self.assertEqual(409, status)
+        self.assertIn("reviewer", detail.lower())
+
+    def test_refusal_is_a_4xx_not_a_500(self):
+        status, _detail = e2b_mod.e2b_export_block(self._unstamped())
+        self.assertGreaterEqual(status, 400)
+        self.assertLess(status, 500)
+
+    def test_non_expedited_case_exports_unstamped(self):
+        self.assertEqual(
+            e2b_mod.E2B_EXPORTABLE,
+            e2b_mod.e2b_export_block(self._unstamped(seriousness_flags=[])),
+        )
+        self.assertEqual(
+            e2b_mod.E2B_EXPORTABLE,
+            e2b_mod.e2b_export_block(self._unstamped(expectedness="expected")),
+        )
+
+    def test_incomplete_case_is_still_refused_first(self):
+        """The E2B minimum outranks the reviewer gate: no elements, no ICSR."""
+        status, detail = e2b_mod.e2b_export_block(self._unstamped(e2b_minimum_met=False))
+        self.assertEqual(422, status)
+        self.assertIn("e2b_minimum_met", detail)
+
+    def test_the_one_gate_raises_its_own_status(self):
+        gate = fn_block(self.text, E2B_GATEWAY_HELPER)
+        self.assertIn("e2b_export_block", gate, "one decision for both routes")
+        self.assertIn("REVIEW_GATE_STATUS", gate, "the 409 must reach the caller")
+        self.assertIn("raise HTTPException(status_code=status, detail=detail)", gate)
+
+    def test_stub_adapter_is_never_reached_unstamped(self):
+        """The submit path is gated by the SAME helper the XML path uses."""
+        block = fn_block(self.text, E2B_SUBMIT_ENDPOINT)
+        self.assertIn("_e2b_case", block)
+        self.assertLess(
+            block.index("_e2b_case"),
+            block.index("StubGatewayAdapter"),
+            "the gate must run before the adapter is built",
+        )
