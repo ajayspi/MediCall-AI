@@ -21,13 +21,14 @@ Enforcement mirrors the house pattern:
   mailbox or SMTP key never fails an intake that has already stored the case.
 """
 
+import base64
 import hmac
 import os
 import uuid
 from datetime import date, datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
 
@@ -45,6 +46,12 @@ from app.db.postgres import (
     list_adverse_events,
     service_request_ctx,
     update_quality_complaint,
+)
+from app.services.e2b import (
+    CASE_NOT_FOUND_DETAIL,
+    StubGatewayAdapter,
+    e2b_export_block,
+    e2b_xml_from_case,
 )
 from app.services.notifications import send_notification
 from app.services.pharmacovigilance import (
@@ -67,6 +74,7 @@ router = APIRouter(prefix="/api/pv", tags=["pv"])
 # reads as "a case arrived" and then "a complaint moved forward".
 PV_INTAKE_EVENT = "pv_case_intake"
 PV_DISPOSITION_EVENT = "pqc_disposition"
+PV_E2B_EVENT = "pv_e2b_prepared"
 
 
 # ─── Request models ─────────────────────────────────────────────────────────
@@ -493,6 +501,117 @@ async def print_pv_case_ep(case_id: str, user=Depends(get_current_user)):
     if row is None:
         raise HTTPException(status_code=404, detail="case not found")
     return HTMLResponse(render_case_html(_case_row(row)))
+
+
+# ─── E2B(R3) XML + gateway adapter (phase-2 slice 2A) ───────────────────────
+# NOTHING LEAVES THE SYSTEM FROM HERE. The generator is Phase-1-bundle-driven
+# (app/services/e2b.py) and the only adapter in this slice is a stub: the
+# NCC-PvPI E2B-XML endpoint, its credentials and a validated environment (GVP
+# Module I QMS) are deployment configuration, and a PVOIC signs off and sends.
+#
+# Gating differs by caller, deliberately:
+# - GET .../e2b.xml is SERVICE-TOKEN guarded like intake, because its caller is
+#   a machine (a safety system or an export job) holding no user session.
+# - POST .../e2b is IDENTITY gated, because preparing the artifact for a
+#   regulator is a PVOIC action.
+
+
+async def _e2b_case(case_id: str) -> tuple:
+    """(case row, sender case id) for a stored case, or the gate's refusal.
+
+    Returns (row, case, sender_case_id) on success; raises the gate's own
+    HTTPException otherwise, so both routes refuse a missing case (404) and a
+    case that cannot yet be an ICSR (422) from ONE decision, not two copies of
+    it.
+    """
+    cid = _uuid(case_id, "case_id")
+    row = await get_adverse_event(cid)
+    case = _case_row(row) if row is not None else {}
+    status, detail = e2b_export_block(case)
+    if status == 404:
+        raise HTTPException(status_code=404, detail=CASE_NOT_FOUND_DETAIL)
+    if status == 422:
+        raise HTTPException(status_code=422, detail=detail)
+    return row, case, str(cid)
+
+
+@router.get("/cases/{case_id}/e2b.xml")
+async def get_pv_case_e2b_xml_ep(request: Request, case_id: str):
+    """E2B(R3)-shaped XML for ONE validated case. Nothing is submitted.
+
+    Service-token guarded exactly like intake (constant-time compare, no user
+    identity on the path). The document is generated from the Phase-1 export
+    bundle, so it mirrors the JSON/CSV exports key for key, and it is
+    deterministic: the same case always produces the same bytes, which is what
+    makes an audit trail of "what was generated" meaningful.
+    """
+    expected = os.environ.get("WEBHOOK_SERVICE_TOKEN", "dev-service-token")
+    got = request.headers.get("X-Service-Token", "")
+    if not hmac.compare_digest(got, expected):
+        raise HTTPException(status_code=401, detail="invalid or missing service token")
+
+    _row, case, sender_case_id = await _e2b_case(case_id)
+    xml = e2b_xml_from_case(build_e2b_case(case), sender_case_id)
+    return Response(
+        content=xml,
+        media_type="application/xml",
+        headers={
+            "Content-Disposition": f'attachment; filename="e2b-{sender_case_id}.xml"'
+        },
+    )
+
+
+@router.post("/cases/{case_id}/e2b")
+async def prepare_pv_case_e2b_submission_ep(case_id: str, user=Depends(get_current_user)):
+    """Prepare a case's ICSR and hand it to the gateway adapter. NOTHING IS SENT.
+
+    Identity gated: this is the PVOIC's step. The artifact is generated, passed
+    to the STUB adapter, and the acknowledgement comes back in the response for
+    sign-off — there is no endpoint, credential or client in this slice, and
+    `submitted` is a constant false so no consumer can read a preparation as a
+    transmission.
+
+    The day-zero clock is deliberately untouched: preparing is not submitting,
+    and the compliance_events row records what was built, for which channel,
+    with which receipt — the audit trail has to show the difference between
+    "generated" and "sent".
+    """
+    row, case, sender_case_id = await _e2b_case(case_id)
+    xml = e2b_xml_from_case(build_e2b_case(case), sender_case_id)
+
+    # The only adapter this slice ships. A live adapter is a separate, validated
+    # deployment concern (endpoint + MAH credentials + TLS), never this call.
+    adapter = StubGatewayAdapter()
+    reply = adapter.submit(xml.encode("utf-8"))
+
+    await create_compliance_event(
+        clinic_id=row.clinic_id,
+        event_type=PV_E2B_EVENT,
+        severity="high" if case["seriousness_flags"] else "medium",
+        description=(
+            f"E2B(R3) XML prepared for submission; channel={adapter.channel()} "
+            f"sender_case_id={sender_case_id} xml_bytes={len(xml.encode('utf-8'))} "
+            f"receipt={reply.receipt_id} submitted=false"
+        ),
+    )
+
+    return {
+        "status": "prepared_not_submitted",
+        # The sender's own case identifier IS the stored case id in this slice;
+        # they are echoed separately because a gateway receipt keys on the C.1.8.1
+        # value, and the XML generator must not be the only place that lives.
+        "case_id": sender_case_id,
+        "sender_case_id": sender_case_id,
+        "channel": adapter.channel(),
+        "xml": xml,
+        "payload": base64.b64encode(reply.payload).decode("ascii"),
+        "gateway_reply": reply.as_dict(),
+        "submitted": False,
+        "note": (
+            "slice 2A: generated and staged for a PVOIC, not sent. The NCC-PvPI "
+            "endpoint and MAH credentials are deployment configuration."
+        ),
+    }
 
 
 # ─── Quality complaint disposition (identity-gated) ─────────────────────────

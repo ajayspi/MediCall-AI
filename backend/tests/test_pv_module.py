@@ -13,9 +13,11 @@ no /api/pv router, no products/adverse_events/quality_complaints/medical_
 inquiries tables, no pv_alert notification kind.
 
 GREEN after implementation: 4 tables with RLS+FORCE+{table}_manage policies,
-4 SQLAlchemy models + repository helpers, the 4 stdlib service functions, 7
-routes on the twelfth router, a compliance_events audit row per intake and per
-disposition change, and the pv_alert kind (default on, env-gated mailbox).
+4 SQLAlchemy models + repository helpers, the 4 stdlib service functions, 9
+routes on the twelfth router (the last two are the phase-2 slice 2A E2B(R3) XML
+path and its stub-adapter prepare path — see test_e2b.py), a compliance_events
+audit row per intake and per disposition change, and the pv_alert kind
+(default on, env-gated mailbox).
 
 Run: py -3.14 -m unittest discover -s tests -p "test_pv_module.py"   (from backend/)
 """
@@ -1166,6 +1168,8 @@ PV_ROUTES = {
     ("get", "/cases"),
     ("post", "/export"),
     ("get", "/cases/{case_id}/print"),
+    ("get", "/cases/{case_id}/e2b.xml"),
+    ("post", "/cases/{case_id}/e2b"),
     ("patch", "/complaints/{complaint_id}"),
 }
 
@@ -1177,6 +1181,7 @@ IDENTITY_GATED = (
     "export_pv_ep",
     "print_pv_case_ep",
     "update_complaint_ep",
+    "prepare_pv_case_e2b_submission_ep",
 )
 
 
