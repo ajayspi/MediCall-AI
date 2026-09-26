@@ -19,6 +19,13 @@ Enforcement mirrors the house pattern:
   row, so the PV trail is reconstructable from the audit log alone.
 - A serious-case pv_alert to the PVOIC mailbox is best-effort: a missing
   mailbox or SMTP key never fails an intake that has already stored the case.
+
+Phase-2 additions keep the same shape. Slice 2A added the E2B(R3) generator and
+the STUB gateway adapter (nothing is ever sent from this router). Slice 2E
+added the read-only PVOIC compliance views - GET /dashboard, /dashboard/psur
+and /audit - which fetch through the existing repository helpers and hand the
+rows to the pure helper app/services/pv_dashboard.py, so every number is
+assembled in one testable place and the India clock is never re-derived here.
 """
 
 import base64
@@ -44,6 +51,10 @@ from app.db.postgres import (
     get_call,
     get_quality_complaint,
     list_adverse_events,
+    list_compliance_events,
+    list_medical_inquiries,
+    list_products,
+    list_quality_complaints,
     service_request_ctx,
     update_quality_complaint,
 )
@@ -66,6 +77,12 @@ from app.services.pharmacovigilance import (
     parse_product_csv,
     render_case_html,
     validate_minimum_criteria,
+)
+from app.services.pv_dashboard import (
+    AUDIT_MAX_DAYS,
+    build_audit_trail,
+    build_dashboard_snapshot,
+    build_psur_schedule,
 )
 
 router = APIRouter(prefix="/api/pv", tags=["pv"])
@@ -457,6 +474,90 @@ async def list_pv_cases_ep(
         case["overdue"] = days_remaining < 0
         cases.append(case)
     return {"cases": cases, "count": len(cases)}
+
+
+# ─── PVOIC compliance dashboard (identity-gated, READ-ONLY) ─────────────────
+# Phase-2 slice 2E. Three read routes over the SAME data the officer already
+# works with: the queue, the PSUR calendar, the audit trail. No writer, no
+# new table, no new dependency, and no second copy of the India clock — every
+# number is assembled by the pure helper app/services/pv_dashboard.py from rows
+# this router already knows how to fetch.
+#
+# The dashboard is a VIEW, never a decision: it reports status, deadlines and
+# counts, and the PVOIC judges causality, coding and submission.
+#
+# The case list is fetched with its maximum page size: a dashboard that counted
+# only the first page would report a clinic with 300 open cases as having 200.
+DASHBOARD_CASE_LIMIT = 200
+
+
+@router.get("/dashboard")
+async def pv_dashboard_ep(clinic_id: str, user=Depends(get_current_user)):
+    """The PVOIC's compliance snapshot for one clinic. READ-ONLY.
+
+    One document: case counts by type and status, the India-clock countdowns
+    (overdue red flags, everything due in the next 48h), the complaint
+    pipeline, the PSUR calendar and the last 7 days of PV audit events.
+
+    Overdue is a flag on an OPEN case, never a status: a case the officer has
+    already notified, submitted or closed is not overdue, however late it went.
+    """
+    cid = _uuid(clinic_id, "clinic_id")
+    ae_rows = await list_adverse_events(clinic_id=cid, limit=DASHBOARD_CASE_LIMIT)
+    pqc_rows = await list_quality_complaints(clinic_id=cid)
+    mi_rows = await list_medical_inquiries(clinic_id=cid)
+    product_rows = await list_products(clinic_id=cid)
+    audit_rows = await list_compliance_events(clinic_id=cid)
+
+    return {
+        "clinic_id": str(cid),
+        **build_dashboard_snapshot(
+            ae_rows=ae_rows,
+            pqc_rows=pqc_rows,
+            mi_rows=mi_rows,
+            product_rows=product_rows,
+            audit_rows=audit_rows,
+            now=_now(),
+        ),
+    }
+
+
+@router.get("/dashboard/psur")
+async def pv_dashboard_psur_ep(clinic_id: str, user=Depends(get_current_user)):
+    """The PSUR calendar per product: next window, and whether one is due now.
+
+    Its own endpoint because it is the one view a product owner refreshes on a
+    calendar rather than a queue — the schedule itself is the same pure helper
+    the snapshot embeds, so the two can never disagree.
+    """
+    cid = _uuid(clinic_id, "clinic_id")
+    product_rows = await list_products(clinic_id=cid)
+    return {"clinic_id": str(cid), **build_psur_schedule(product_rows, now=_now())}
+
+
+@router.get("/audit")
+async def pv_audit_ep(
+    clinic_id: str, days: int = 30, user=Depends(get_current_user)
+):
+    """Recent PV compliance_events rows, newest first (default 30 days).
+
+    Only this module's own event types (pv_* / pqc_*) are returned: the same
+    table also carries DPDP events, and a breach row in a PV trail would make
+    the count meaningless. Read-only, and the window is bounded (1..365 days)
+    so a caller cannot ask for the whole table.
+    """
+    cid = _uuid(clinic_id, "clinic_id")
+    try:
+        window = int(days)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="days must be an integer")
+    if window < 1 or window > AUDIT_MAX_DAYS:
+        raise HTTPException(
+            status_code=422, detail=f"days must be between 1 and {AUDIT_MAX_DAYS}"
+        )
+
+    rows = await list_compliance_events(clinic_id=cid)
+    return {"clinic_id": str(cid), **build_audit_trail(rows, days=window, now=_now())}
 
 
 # ─── Export (identity-gated) ────────────────────────────────────────────────

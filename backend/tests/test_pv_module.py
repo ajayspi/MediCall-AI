@@ -1171,6 +1171,10 @@ PV_ROUTES = {
     ("get", "/cases/{case_id}/e2b.xml"),
     ("post", "/cases/{case_id}/e2b"),
     ("patch", "/complaints/{complaint_id}"),
+    # Phase-2 slice 2E: the read-only PVOIC compliance views.
+    ("get", "/dashboard"),
+    ("get", "/dashboard/psur"),
+    ("get", "/audit"),
 }
 
 SERVICE_GUARDED = ("create_pv_case_ep",)
@@ -1182,6 +1186,9 @@ IDENTITY_GATED = (
     "print_pv_case_ep",
     "update_complaint_ep",
     "prepare_pv_case_e2b_submission_ep",
+    "pv_dashboard_ep",
+    "pv_dashboard_psur_ep",
+    "pv_audit_ep",
 )
 
 
