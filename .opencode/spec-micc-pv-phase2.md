@@ -67,10 +67,28 @@ parts (capture form, reviewer gate) can proceed. 2D is independent. Suggest orde
 | Voice intents without smoke (Docker parked) | In-call capture only unit-tested | Unit coverage now; smoke deferred to Docker resume; no production voice claim until then |
 | AI-assisted capture drifts into advice/causality | Collector rule broken | Reuse Phase-1 guardrails + explicit none-advice phrases; 2B extraction is question-scripted, not free-association |
 
+## Final states (per slice) — all IMPLEMENTED & VERIFIED 2026-09-26
+
+| Slice | Commit | Shipped | Tests added |
+|---|---|---|---|
+| **2A** E2B(R3) XML + gateway adapter | `9157bbc` | `services/e2b.py` (stdlib generator, deterministic, contract = Phase-1 export keys 1:1, enforced by `test_element_set_is_contract_plus_declared_envelope`); routes `GET/POST /api/pv/cases/{id}/e2b(.xml)`; `StubGatewayAdapter` (no network; PvPI endpoint = deployment config) | +55 |
+| **2E** PVOIC dashboard API | `6c10b2e` | `services/pv_dashboard.py` (pure snapshot builder); routes `/api/pv/dashboard`, `/dashboard/psur`, `/audit`; overdue/upcoming-48h clocks keyed off Phase-1 `compute_reporting_deadline`; PSUR windows 6-monthly ×2y → annual ×2y → N/A | +64 |
+| **2B** In-call voice intake | `4ef4c22` | `services/call_intake.py` (detect/extract/script/special-flags/payload over 5 languages, code-switch + \b-vs-native-script rules); `agent_logic` wiring `caller_speech`/`run_pv_intake`; `livekit_agent` hangup seam; intent expressed ONLY via filled verbatim column (20-key payload == `PvCaseCreate`, AST-proved). E2E smoke still deferred to Docker resume | +82 |
+| **2D** MI approved-content KB | `cb3cb26` | `product_responses` table (+RLS FORCE, policy, GRANTs) + ORM + 8 helpers; `services/medical_info.py` answer chain approved→label→`NO_MEDICAL_ADVICE` (constant), version supersession (never delete), reportable content FLAGS (`suggest_report_to_pv`) never auto-creates; 3 routes; `pv_inquiry_answered` audit | +57 |
+| **2C** Coding layer + export gate | `bcefe30` | `services/coding.py`: `DictionaryBackend` seam + `FixtureDictionary` (`FIX-` lexicon, no licensed content) + `register_dictionary` swap point; `code_case` fail-closed (miss = no codes anywhere); WHO-UMC `causality_capture` (reporter+reviewer, atomic, never system-assigned, scale constant); `is_expedited`/`reviewer_stamp` → export gate (409) for serious+unexpected without reviewer stamp; 2 routes; ORM columns added idempotently (`ADD COLUMN IF NOT EXISTS`) | +93 |
+
+**Test ladder**: 687 (Phase-1 final) → 742 (2A) → 806 (2E) → 888 (2B) → 945 (2D) → **1038 (2C)** —
+all green, `py -3.14 -m unittest discover` + `compileall` exit 0 at every rung (scheduler re-verified
+each). No regression, no PyPI deps added anywhere.
+
+**Deferred (attached to Phase 2)**: 2C licensed dictionary injection (MedDRA/WHODrug subscription —
+swap via `register_dictionary`, no code change); 2B end-to-end voice smoke (parked Docker
+livekit/openai unblock); note the pre-existing parked `backend/requirements.txt` edits remain
+unstaged and untouched throughout.
+
 ## Spec Status
-**Status**: **APPROVED — 2026-09-26** (user sign-off via "continue"). Implementing slices in the
-suggested order: **2A → 2E → 2B → 2D → 2C** (each a fresh implementation session, per workflow).
-Deferred-by-license: 2C's MedDRA/WHODrug dictionary integration (needs a MedDRA subscription — the
-non-dictionary parts: capture form + reviewer gate ship now). Deferred-by-blocker: 2B end-to-end
-voice smoke (parked Docker) — 2B unit coverage ships now. This file will be updated with per-slice
-final states as they land.
+**Status**: **IMPLEMENTED & VERIFIED — 2026-09-26**. Phase 2 approved via "continue"; all five slices
+implemented in fresh sessions in the order 2A → 2E → 2B → 2D → 2C, gates re-verified by the
+scheduler; per-slice final states above. Open items: licensed dictionary injection (needs MedDRA
+subscription), voice smoke (needs Docker unblock). Next possible tracks: PSUR/dashboard frontend
+(Phase-2.5), live PvPI gateway config, Docker walkthrough resume.
