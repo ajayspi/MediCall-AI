@@ -31,6 +31,10 @@ import {
   revenueKpis as mockRevenueKpis,
   gateways as mockGateways,
   invoices as mockInvoices,
+  pvDashboard as mockPvDashboard,
+  pvPsur as mockPvPsur,
+  pvAudit as mockPvAudit,
+  pvCases as mockPvCases,
 } from "@/components/mock";
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
@@ -245,7 +249,10 @@ async function authFetch<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-function clinicId(): string {
+// The clinic every hook scopes to. Exported so a page that must pass filters
+// (usePvCases) can forward the same id the hook would have defaulted to,
+// instead of duplicating the env lookup.
+export function clinicId(): string {
   return process.env.NEXT_PUBLIC_CLINIC_ID ?? "";
 }
 
@@ -1084,4 +1091,484 @@ export function useAdminLiveCalls() {
     },
   ];
   return { kpis, calls: all.map(toAdminLiveCallView) };
+}
+
+// ---- PVOIC hooks (phase-2.5, spec-micc-pv-phase25.md) ----------------------
+// The read-only PV / Medical Information console, off the approved 2E surface:
+// /api/pv/dashboard, /api/pv/dashboard/psur, /api/pv/audit, /api/pv/cases.
+// Same house policy as every other hook — "true" is always fixtures, "false" is
+// always the API, "auto" (the default) tries the API and falls back to the
+// fixtures on error, so local dev renders a full page instead of an empty one.
+//
+// THE INDIA CLOCK IS NOT RE-DERIVED HERE. days_remaining, hours_remaining and
+// days_overdue are the server's own numbers (app/services/pv_dashboard.py,
+// keyed off the Phase-1 compute_reporting_deadline), and the snapshot is
+// re-read every 60s rather than counted down in the browser: a UI timer can
+// disagree with the legal clock, so there is deliberately no setInterval
+// anywhere in this console — a client countdown is never the record.
+
+// ---- backend contract types (app/api/pv.py + services/pv_dashboard.py) ----
+
+export type ApiPvOverdueEntry = {
+  case_id: string;
+  status: string;
+  is_serious: boolean;
+  notification_deadline: string;
+  days_overdue: number;
+};
+
+export type ApiPvUpcomingEntry = {
+  case_id: string;
+  status: string;
+  is_serious: boolean;
+  notification_deadline: string;
+  days_remaining: number;
+  hours_remaining: number;
+};
+
+export type ApiPvPsurEntry = {
+  product_id: string;
+  product_name: string;
+  anchor: string | null;
+  anchor_field: string;
+  age_days: number | null;
+  due_now: boolean;
+  next_window: string;
+  next_due_date: string | null;
+  days_remaining: number | null;
+};
+
+export type ApiPvPsur = {
+  schedule: string;
+  anchor_field: string;
+  products: number;
+  due_now: number;
+  entries: ApiPvPsurEntry[];
+};
+
+export type ApiPvAuditEvent = {
+  id: string;
+  event_type: string;
+  severity: string;
+  status: string;
+  detected_at: string;
+  description: string;
+};
+
+export type ApiPvAudit = {
+  window_days: number;
+  count: number;
+  by_event_type: Record<string, number>;
+  events: ApiPvAuditEvent[];
+};
+
+export type ApiPvCase = {
+  id: string;
+  case_type: string;
+  product_id: string | null;
+  event_text: string;
+  seriousness_flags: string[];
+  patient_initials: string | null;
+  patient_age: string | null;
+  patient_sex: string | null;
+  status: string;
+  received_at: string;
+  notification_deadline: string;
+  days_remaining: number;
+  overdue: boolean;
+  e2b_minimum_met: boolean;
+};
+
+export type ApiPvCases = { cases: ApiPvCase[]; count: number };
+
+export type ApiPvDashboard = {
+  generated_at: string;
+  cases: {
+    by_type: { ae: number; pqc: number; mi: number; total: number };
+    by_status: {
+      open: number;
+      overdue: number;
+      notified: number;
+      submitted: number;
+      closed: number;
+      unknown: number;
+      total: number;
+    };
+  };
+  clocks: {
+    horizon_hours: number;
+    overdue_count: number;
+    overdue: ApiPvOverdueEntry[];
+    upcoming_count: number;
+    upcoming: ApiPvUpcomingEntry[];
+  };
+  pqc: {
+    total: number;
+    by_investigation_status: Record<string, number>;
+    by_disposition: Record<string, number>;
+  };
+  mi: { total: number; by_status: Record<string, number> };
+  psur: ApiPvPsur;
+  audit: ApiPvAudit;
+};
+
+// ---- display shapes (mirror the mock.ts fixtures) --------------------------
+
+export type PvBucket = { label: string; count: number };
+
+export type PvOverdueRow = {
+  caseId: string;
+  status: string;
+  isSerious: boolean;
+  deadline: string;
+  daysOverdue: number;
+};
+
+export type PvUpcomingRow = {
+  caseId: string;
+  status: string;
+  isSerious: boolean;
+  deadline: string;
+  daysRemaining: number;
+  hoursRemaining: number;
+};
+
+export type PvPsurRow = {
+  productId: string;
+  productName: string;
+  anchor: string | null;
+  ageDays: number | null;
+  dueNow: boolean;
+  nextWindow: string;
+  nextDueDate: string | null;
+  daysRemaining: number | null;
+};
+
+export type PvAuditRow = {
+  id: string;
+  eventType: string;
+  severity: string;
+  status: string;
+  detectedAt: string;
+  description: string;
+};
+
+/** One AE row as the 2E GET /cases returns it (product_id, never a name). */
+export type PvCaseView = {
+  id: string;
+  caseType: string;
+  product: string;
+  patient: string;
+  eventText: string;
+  isSerious: boolean;
+  criteria: string[];
+  status: string;
+  deadline: string;
+  daysRemaining: number;
+  overdue: boolean;
+  receivedAt: string;
+  e2bMinimumMet: boolean;
+};
+
+export type PvDashboardView = {
+  generatedAt: string;
+  kpis: Kpi[];
+  horizonHours: number;
+  overdue: PvOverdueRow[];
+  upcoming: PvUpcomingRow[];
+  pqcStages: PvBucket[];
+  pqcDispositions: PvBucket[];
+  psur: {
+    products: number;
+    dueNow: number;
+    schedule: string;
+    nextWindow: string;
+    nextDueDate: string | null;
+  };
+  audit: { windowDays: number; count: number; digest: PvBucket[] };
+};
+
+export type PvPsurView = {
+  schedule: string;
+  anchorField: string;
+  products: number;
+  dueNow: number;
+  entries: PvPsurRow[];
+};
+
+export type PvAuditView = {
+  windowDays: number;
+  count: number;
+  digest: PvBucket[];
+  events: PvAuditRow[];
+};
+
+// ---- mapping helpers --------------------------------------------------------
+
+/** {status_or_stage: count} -> a stable, display-ready bucket list. */
+function pvBuckets(counts: Record<string, number> | undefined): PvBucket[] {
+  return Object.entries(counts ?? {}).map(([label, count]) => ({ label, count }));
+}
+
+/** "under_investigation" -> "Under investigation" (the state-machine stages). */
+export function pvLabel(value: string): string {
+  const words = value.replace(/_/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : value;
+}
+
+/** A case as the queue shows it: the dictionary id, never an invented name. */
+function pvProductLabel(productId: string | null): string {
+  return productId ? productId.slice(0, 8).toUpperCase() : "—";
+}
+
+function pvPatientLabel(c: ApiPvCase): string {
+  const parts = [
+    c.patient_initials ?? "",
+    c.patient_age ? `${c.patient_age} y` : "",
+    c.patient_sex ?? "",
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "—";
+}
+
+export function toPvCaseView(c: ApiPvCase): PvCaseView {
+  const criteria = c.seriousness_flags ?? [];
+  return {
+    id: c.id.slice(0, 8).toUpperCase(),
+    caseType: c.case_type || "AE",
+    product: pvProductLabel(c.product_id),
+    patient: pvPatientLabel(c),
+    eventText: c.event_text || "—",
+    isSerious: criteria.length > 0,
+    criteria,
+    status: c.status,
+    deadline: c.notification_deadline,
+    daysRemaining: c.days_remaining ?? 0,
+    overdue: Boolean(c.overdue) || (c.days_remaining ?? 0) < 0,
+    receivedAt: c.received_at,
+    e2bMinimumMet: Boolean(c.e2b_minimum_met),
+  };
+}
+
+function toPvPsurRow(e: ApiPvPsurEntry): PvPsurRow {
+  return {
+    productId: e.product_id,
+    productName: e.product_name || "—",
+    anchor: e.anchor,
+    ageDays: e.age_days,
+    dueNow: Boolean(e.due_now),
+    nextWindow: e.next_window,
+    nextDueDate: e.next_due_date,
+    daysRemaining: e.days_remaining,
+  };
+}
+
+function toPvAuditRow(e: ApiPvAuditEvent): PvAuditRow {
+  return {
+    id: e.id,
+    eventType: e.event_type,
+    severity: e.severity || "low",
+    status: e.status || "—",
+    detectedAt: e.detected_at,
+    description: e.description || "—",
+  };
+}
+
+/** The soonest window still ahead, for the overview's one-line PSUR summary. */
+function nextPsurWindow(entries: ApiPvPsurEntry[]): { label: string; due: string | null } {
+  const ahead = entries
+    .filter((e) => e.next_due_date)
+    .sort((a, b) => (a.next_due_date ?? "").localeCompare(b.next_due_date ?? ""));
+  const first = ahead[0];
+  return first ? { label: first.next_window, due: first.next_due_date ?? null } : { label: "—", due: null };
+}
+
+function pvCaseKpis(rows: PvCaseView[]): Kpi[] {
+  const serious = rows.filter((r) => r.isSerious).length;
+  const overdue = rows.filter((r) => r.overdue).length;
+  return [
+    {
+      label: "Cases Shown",
+      value: String(rows.length),
+      trend: "read-only queue",
+      trendUp: true,
+    },
+    {
+      label: "Serious",
+      value: String(serious),
+      trend: "ICH E2A flags",
+      trendUp: serious === 0,
+    },
+    {
+      label: "Overdue",
+      value: String(overdue),
+      trend: "past the India clock",
+      trendUp: overdue === 0,
+    },
+  ];
+}
+
+/** The same filter the server applies, for the fixtures in offline dev. */
+function filterPvCases(rows: PvCaseView[], status: string, seriousOnly: boolean): PvCaseView[] {
+  return rows.filter(
+    (r) => (!status || r.status === status) && (!seriousOnly || r.isSerious),
+  );
+}
+
+// ---- hooks ------------------------------------------------------------------
+
+export function usePvDashboard(cid: string = clinicId()) {
+  const q = useQuery({
+    queryKey: ["pv-dashboard", cid],
+    queryFn: () =>
+      authFetch<ApiPvDashboard>(`/api/pv/dashboard?clinic_id=${encodeURIComponent(cid)}`),
+    enabled: USE_MOCK !== "true",
+    // The clock caption must stay true: the server re-measures the India
+    // deadline on every read, so a 60s re-read is what keeps the countdowns
+    // honest. There is no in-page timer.
+    refetchInterval: 60_000,
+  });
+  const useFallback =
+    USE_MOCK === "true" ||
+    (USE_MOCK !== "false" && (q.isError || !q.data));
+  if (useFallback) return mockPvDashboard;
+  const d = q.data as ApiPvDashboard;
+  const byType = d.cases?.by_type ?? { ae: 0, pqc: 0, mi: 0, total: 0 };
+  const byStatus = d.cases?.by_status ?? {
+    open: 0, overdue: 0, notified: 0, submitted: 0, closed: 0, unknown: 0, total: 0,
+  };
+  const kpis: Kpi[] = [
+    {
+      label: "Total Cases",
+      value: String(byType.total),
+      trend: "AE · PQC · MI recorded",
+      trendUp: byType.total > 0,
+    },
+    {
+      label: "AE Cases",
+      value: String(byType.ae),
+      trend: "adverse event reports",
+      trendUp: byType.ae > 0,
+    },
+    {
+      label: "PQC Complaints",
+      value: String(byType.pqc),
+      trend: "quality complaints",
+      trendUp: byType.pqc > 0,
+    },
+    {
+      label: "MI Inquiries",
+      value: String(byType.mi),
+      trend: "medical information",
+      trendUp: byType.mi > 0,
+    },
+    {
+      label: "Overdue Cases",
+      value: String(byStatus.overdue),
+      trend: "past the India clock",
+      trendUp: byStatus.overdue === 0,
+    },
+  ];
+  const psur = d.psur ?? { schedule: "", anchor_field: "created_at", products: 0, due_now: 0, entries: [] };
+  const next = nextPsurWindow(psur.entries ?? []);
+  return {
+    generatedAt: d.generated_at,
+    kpis,
+    horizonHours: d.clocks?.horizon_hours ?? 48,
+    overdue: (d.clocks?.overdue ?? []).map((e) => ({
+      caseId: e.case_id.slice(0, 8).toUpperCase(),
+      status: e.status,
+      isSerious: e.is_serious,
+      deadline: e.notification_deadline,
+      daysOverdue: e.days_overdue,
+    })),
+    upcoming: (d.clocks?.upcoming ?? []).map((e) => ({
+      caseId: e.case_id.slice(0, 8).toUpperCase(),
+      status: e.status,
+      isSerious: e.is_serious,
+      deadline: e.notification_deadline,
+      daysRemaining: e.days_remaining,
+      hoursRemaining: e.hours_remaining,
+    })),
+    pqcStages: pvBuckets(d.pqc?.by_investigation_status),
+    pqcDispositions: pvBuckets(d.pqc?.by_disposition),
+    psur: {
+      products: psur.products,
+      dueNow: psur.due_now,
+      schedule: psur.schedule,
+      nextWindow: next.label,
+      nextDueDate: next.due,
+    },
+    audit: {
+      windowDays: d.audit?.window_days ?? 7,
+      count: d.audit?.count ?? 0,
+      digest: pvBuckets(d.audit?.by_event_type),
+    },
+  };
+}
+
+export function usePvPsur(cid: string = clinicId()) {
+  const q = useQuery({
+    queryKey: ["pv-psur", cid],
+    queryFn: () =>
+      authFetch<ApiPvPsur>(`/api/pv/dashboard/psur?clinic_id=${encodeURIComponent(cid)}`),
+    enabled: USE_MOCK !== "true",
+  });
+  const useFallback =
+    USE_MOCK === "true" ||
+    (USE_MOCK !== "false" && (q.isError || !q.data));
+  if (useFallback) return mockPvPsur;
+  const p = q.data as ApiPvPsur;
+  return {
+    schedule: p.schedule,
+    anchorField: p.anchor_field,
+    products: p.products,
+    dueNow: p.due_now,
+    entries: (p.entries ?? []).map(toPvPsurRow),
+  };
+}
+
+export function usePvAudit(cid: string = clinicId(), days = 30) {
+  const q = useQuery({
+    queryKey: ["pv-audit", cid, days],
+    queryFn: () =>
+      authFetch<ApiPvAudit>(`/api/pv/audit?clinic_id=${encodeURIComponent(cid)}&days=${days}`),
+    enabled: USE_MOCK !== "true",
+  });
+  const useFallback =
+    USE_MOCK === "true" ||
+    (USE_MOCK !== "false" && (q.isError || !q.data));
+  if (useFallback) return mockPvAudit;
+  const a = q.data as ApiPvAudit;
+  return {
+    windowDays: a.window_days,
+    count: a.count,
+    digest: pvBuckets(a.by_event_type),
+    events: (a.events ?? []).map(toPvAuditRow),
+  };
+}
+
+export function usePvCases(
+  cid: string = clinicId(),
+  status = "",
+  seriousOnly = false,
+) {
+  const query = [
+    `clinic_id=${encodeURIComponent(cid)}`,
+    status ? `status=${encodeURIComponent(status)}` : "",
+    seriousOnly ? "serious_only=true" : "",
+  ].filter(Boolean).join("&");
+  const q = useQuery({
+    queryKey: ["pv-cases", cid, status, seriousOnly],
+    queryFn: () => authFetch<ApiPvCases>(`/api/pv/cases?${query}`),
+    enabled: USE_MOCK !== "true",
+    placeholderData: () => ({ cases: [], count: 0 }),
+  });
+  const rows = (q.data?.cases ?? []).map(toPvCaseView);
+  // An EMPTY result is an answer here, not a failure: a filter that matches
+  // nothing must render an empty queue, never the unfiltered fixtures. Only a
+  // transport error (or USE_MOCK=true) reaches for them — and then the same
+  // filter is applied locally, so the chips stay honest offline too.
+  const useFallback = USE_MOCK === "true" || (USE_MOCK !== "false" && q.isError);
+  const shown = useFallback ? filterPvCases(mockPvCases, status, seriousOnly) : rows;
+  return { rows: shown, kpis: pvCaseKpis(shown) };
 }

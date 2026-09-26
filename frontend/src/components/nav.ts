@@ -1,7 +1,10 @@
 // Single source of truth for dashboard navigation — tested by
 // tests/test_dashboards.py: exactly 7 clinic tabs (D1, Settings lives in the
-// header, not here) and exactly 9 admin views. Icon = SVG path data consumed
-// by Sidebar. Do not inline nav arrays in layouts.
+// header, not here) and exactly 9 admin views; and by
+// tests/test_pv_frontend.py: exactly 4 PVOIC views (phase-2.5, the third shell
+// at /pv — a real segment, because a `(pv)` route group would resolve to bare
+// paths and collide with the arrays pinned above). Icon = SVG path data
+// consumed by Sidebar. Do not inline nav arrays in layouts.
 export type NavItem = { href: string; label: string; icon: string };
 
 export const CLINIC_NAV: NavItem[] = [
@@ -24,4 +27,16 @@ export const ADMIN_NAV: NavItem[] = [
   { href: "/admin/billing", label: "Billing", icon: "M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" },
   { href: "/admin/infrastructure", label: "Infrastructure", icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065zM15 12a3 3 0 11-6 0 3 3 0 016 0z" },
   { href: "/admin/audit", label: "Audit", icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-5.618 3.032m5.618 7.968A11.955 11.955 0 0112 19.056a11.955 11.955 0 01-5.618-3.032m0-10.064a11.955 11.955 0 015.618 3.032M12 12a5 5 0 01-4.477 4.91" },
+];
+
+// PVOIC (PV / Medical Information Call Centre) console — phase-2.5, spec
+// spec-micc-pv-phase25.md. Exactly the four read-only 2E views: the compliance
+// overview, the case queue, the PSUR schedule and the PV audit trail. Kept to
+// four so the sidebar says the same four things the API can answer, with no
+// tab that has no backend entity behind it.
+export const PVOIC_NAV: NavItem[] = [
+  { href: "/pv", label: "Overview", icon: "M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" },
+  { href: "/pv/cases", label: "Case Queue", icon: "M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 00-2.15-1.588H6.911a2.25 2.25 0 00-2.15 1.588L2.35 13.177a2.25 2.25 0 00-.1.661z" },
+  { href: "/pv/psur", label: "PSUR Schedule", icon: "M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" },
+  { href: "/pv/audit", label: "Audit Trail", icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-5.618 3.032m5.618 7.968A11.955 11.955 0 0112 19.056a11.955 11.955 0 01-5.618-3.032m0-10.064a11.955 11.955 0 015.618 3.032M12 12a5 5 0 01-4.477 4.91" },
 ];
