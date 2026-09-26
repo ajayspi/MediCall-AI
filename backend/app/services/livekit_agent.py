@@ -45,6 +45,40 @@ def parse_function_arguments(fn_call) -> dict:
     return {}
 
 
+def pv_hangup_body(call: Call, transcript=None) -> dict:
+    """The pharmacovigilance intake result for a call that is ending (D1).
+
+    D1's persistence point needs the exact POST /api/pv/cases body, and the
+    whole collector pipeline (route -> capture -> ask -> flag -> body) lives in
+    app/services/agent_logic.py so it can be unit-tested with this worker
+    absent. The language, clinic and call id come from the call row - never
+    from the transcript.
+
+    PURE glue: it reads the call row and the transcript and returns a dict.
+    A non-PV call (a booking, a refill) yields `should_submit` False and no
+    body, so a routine call can never be filed as a safety report.
+    """
+    return agent_logic.run_pv_intake(
+        transcript,
+        language=getattr(call, "caller_language", "") or "en",
+        clinic_id=getattr(call, "clinic_id", "") or "",
+        call_id=getattr(call, "id", "") or "",
+    )
+
+
+def pv_hangup_case(call: Call, transcript=None):
+    """The case body to persist at hangup, or None when there is nothing to file.
+
+    The filter the persistence point needs: only a routed PV intent produces a
+    body, and an INCOMPLETE one still produces a body (store-and-forward - the
+    minimum is reported, never enforced here).
+    """
+    body = pv_hangup_body(call, transcript)
+    if not isinstance(body, dict) or not body.get("should_submit"):
+        return None
+    return body.get("payload")
+
+
 async def entrypoint(ctx: JobContext):
     """Main LiveKit agent entrypoint (medical flow)."""
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
@@ -128,10 +162,13 @@ async def entrypoint(ctx: JobContext):
                 ):
                     await ctx.room.local_participant.publish_audio(chunk)
 
-    # D1: persist transcript via POST /api/voice/call-completed (agent worker →
-    # API, httpx + API_BASE_URL configured in Docker/CI). `transcript` +
-    # `call.id` are the payload; the reporter below is the integration seam.
-    _ = (transcript, call.id, call.state.value)
+    # D1: persist the finished call (agent worker -> API). `pv_hangup_case` is
+    # the payload - the exact /api/pv/cases body, or None on a non-PV call.
+    # The reporter that actually sends it is the integration seam: the voice
+    # Docker resume is still parked, so this worker never reaches the network
+    # and a case can only be filed from a running stack.
+    pv = pv_hangup_case(call, transcript)
+    _ = (transcript, call.id, call.state.value, pv)
 
 
 def main():

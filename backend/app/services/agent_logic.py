@@ -6,6 +6,7 @@ system prompt, intent -> G3 state-machine application, transcript append, and
 5-language helpers (hi/en/ta/te/bn). Pure functions only: no network, no DB
 (G4 spec §4/§6).
 """
+from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.models.call import Call, CallState, TriageSeverity
@@ -18,6 +19,14 @@ from app.services.languages import (
     STT_TAGS,
     SUPPORTED_LANGUAGES,
 )
+
+# The in-call pharmacovigilance collector (spec-micc-pv-phase2.md, slice 2B).
+# Imported for its pure functions only, and deliberately NOT folded into
+# MEDICAL_FUNCTIONS above: that schema is pinned to 5 names by tests/test_g4_voice.py
+# and is the single source app/services/llm.py ships to the model. The PV
+# function list lives beside its own pipeline (call_intake.PV_FUNCTIONS) so the
+# pin can be lifted deliberately rather than by accident.
+from app.services import call_intake
 
 # Valid triage severities (never a diagnosis — flag only)
 SEVERITIES = {s.value for s in TriageSeverity}  # green, amber, red, critical
@@ -208,3 +217,129 @@ def greeting_for_language(language: Optional[str], clinic_name: str) -> str:
     """
     template = GREETING_TEMPLATES.get(language) if isinstance(language, str) else None
     return (template or GREETING_TEMPLATES["en"]).format(clinic=clinic_name)
+
+
+# ─── Pharmacovigilance in-call capture (slice 2B) ───────────────────────────
+# The in-call half of PV intake: route the call, capture what the caller said,
+# ask for what is still missing, and assemble the exact /api/pv/cases body. It
+# lives here - not in the voice worker - so the whole pipeline is unit-testable
+# with the voice SDK absent, which is the point: a PV collector that can only be
+# exercised with a live voice room is a collector nobody can prove correct.
+def caller_speech(transcript: Any) -> str:
+    """The caller's own words from a transcript, one utterance per line.
+
+    Only `role == "caller"` turns: the agent's questions and the operator's
+    system notes are the call centre's words, and a PV case records what the
+    CALLER said. A missing transcript, a non-list, a non-dict turn and a blank
+    turn are all skipped rather than raising - a call that dropped before any
+    speech is a normal outcome, not an error.
+    """
+    if not isinstance(transcript, (list, tuple)):
+        return ""
+    lines: List[str] = []
+    for turn in transcript:
+        if not isinstance(turn, dict):
+            continue
+        if str(turn.get("role", "")).strip().lower() != "caller":
+            continue
+        text = str(turn.get("text") or "").strip()
+        if text:
+            lines.append(text)
+    return "\n".join(lines)
+
+
+def run_pv_intake(
+    transcript: Any,
+    language: str = "en",
+    clinic_id: str = "",
+    call_id: str = "",
+    phone_suffix: str = "",
+    today: Optional[date] = None,
+) -> Dict[str, Any]:
+    """Run the whole in-call PV pipeline and return what the agent should do.
+
+    The five steps, in the order the voice turn needs them:
+      1. route the call to ae / pqc / mi - or `none`, which is not a PV case;
+      2. capture the ICH E2B minimum from the caller's own words;
+      3. ask, in the caller's language, for exactly what is still missing;
+      4. name the reportable special situations, each with its own prompt;
+      5. assemble the exact POST /api/pv/cases body.
+
+    `transcript` is the live transcript list or a plain string of caller speech.
+
+    NOTHING IS SENT FROM HERE. `payload` is the request body for the D1
+    persistence point in the voice worker; this module has no HTTP client, so a
+    case cannot be filed by accident from a test.
+
+    `e2b_minimum_met` is the ENDPOINT's own check (app/api/pv.py, via
+    app/services/pharmacovigilance.py), REPORTED and not enforced: ABPI
+    store-and-forward means an incomplete case is still captured and still
+    chased by a follow-up call, so `should_submit` is True for every PV intent
+    whether or not the minimum is met. `missing` is what the agent asks about.
+
+    `today` is the reference day for a relative onset ("yesterday"). It is a
+    parameter rather than a clock read, so the same call always yields the same
+    body and a relative phrase with no reference day yields no date at all.
+    """
+    spoken = transcript if isinstance(transcript, str) else caller_speech(transcript)
+    route = call_intake.detect_intent(spoken, language)
+    intent = route["intent"]
+    code = route["language"]
+
+    if intent == "none":
+        # A booking call is not a PV case. Post one anyway and the compliance
+        # audit trail fills with noise, so the pipeline stops here - with no
+        # body, no completeness claim and nothing said about a medicine.
+        return {
+            "intent": intent,
+            "contact_type": route["contact_type"],
+            "function": route["function"],
+            "language": code,
+            "should_submit": False,
+            "payload": None,
+            "script": [],
+            "special_situations": [],
+            "special_prompts": [],
+            "prompts": [],
+            "e2b_minimum_met": False,
+            "missing": [],
+            "is_serious": False,
+            "seriousness_criteria": [],
+        }
+
+    fields = call_intake.extract_case_fields(spoken, intent, code, today=today)
+    situations = call_intake.special_situation_flags(fields, spoken, code)
+    payload = call_intake.build_case_payload(
+        intent,
+        fields,
+        situations,
+        metadata={
+            "clinic_id": clinic_id,
+            "call_id": call_id,
+            "language": code,
+            "phone_suffix": phone_suffix,
+        },
+    )
+    met, missing = call_intake.intake_minimum_criteria(payload)
+    # Asked against the assembled body, not the raw fields: the callback number
+    # already identifies the reporter (WHO E2B accepts a contact detail), so the
+    # agent must not ask a caller for a name it already holds.
+    script = call_intake.question_script(intent, code, fields=payload)
+    special_prompts = call_intake.special_situation_prompts(situations, code)
+    is_serious, criteria = call_intake.is_serious_payload(payload)
+    return {
+        "intent": intent,
+        "contact_type": route["contact_type"],
+        "function": route["function"],
+        "language": code,
+        "should_submit": True,
+        "payload": payload,
+        "script": script,
+        "special_situations": situations,
+        "special_prompts": special_prompts,
+        "prompts": script + special_prompts,
+        "e2b_minimum_met": met,
+        "missing": missing,
+        "is_serious": is_serious,
+        "seriousness_criteria": criteria,
+    }
