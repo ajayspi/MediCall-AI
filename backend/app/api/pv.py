@@ -26,6 +26,21 @@ added the read-only PVOIC compliance views - GET /dashboard, /dashboard/psur
 and /audit - which fetch through the existing repository helpers and hand the
 rows to the pure helper app/services/pv_dashboard.py, so every number is
 assembled in one testable place and the India clock is never re-derived here.
+
+Slice 2D added the MI approved-content knowledge base:
+
+  POST /api/pv/responses                        - append a response version
+  GET  /api/pv/responses?product_id=            - version history (audit)
+  POST /api/pv/inquiries/{inquiry_id}/answer    - answer one MI inquiry
+
+All three are IDENTITY gated: approved wording is written by a Medical Affairs
+officer on a logged-in session, never by the tokenless intake path. The decision
+logic (which version is answerable, whether the answer may speak at all, whether
+the enquirer's words are also reportable) lives in the pure helper
+app/services/medical_info.py; this router only fetches rows, passes them in and
+persists what comes back. The answer path NEVER creates a case: an inquiry whose
+words carry AE/PQC content is FLAGGED (suggest_report_to_pv) and the intake path
+owns the one-business-day handoff, so there is a single source of truth per case.
 """
 
 import base64
@@ -47,22 +62,32 @@ from app.db.postgres import (
     create_notification,
     create_product,
     create_quality_complaint,
+    create_response,
     get_adverse_event,
     get_call,
+    get_medical_inquiry,
+    get_product,
     get_quality_complaint,
     list_adverse_events,
     list_compliance_events,
     list_medical_inquiries,
     list_products,
     list_quality_complaints,
+    list_responses,
     service_request_ctx,
+    update_medical_inquiry_answer,
     update_quality_complaint,
+    update_response_status,
 )
 from app.services.e2b import (
     CASE_NOT_FOUND_DETAIL,
     StubGatewayAdapter,
     e2b_export_block,
     e2b_xml_from_case,
+)
+from app.services.medical_info import (
+    answer_medical_inquiry,
+    next_version,
 )
 from app.services.notifications import send_notification
 from app.services.pharmacovigilance import (
@@ -92,6 +117,9 @@ router = APIRouter(prefix="/api/pv", tags=["pv"])
 PV_INTAKE_EVENT = "pv_case_intake"
 PV_DISPOSITION_EVENT = "pqc_disposition"
 PV_E2B_EVENT = "pv_e2b_prepared"
+# Phase-2 slice 2D: who approved which wording, and what an enquirer was told.
+PV_RESPONSE_EVENT = "pv_response_approved"
+PV_INQUIRY_ANSWERED_EVENT = "pv_inquiry_answered"
 
 
 # ─── Request models ─────────────────────────────────────────────────────────
@@ -150,6 +178,17 @@ class PvExportRequest(BaseModel):
     serious_only: bool = False
 
 
+class ProductResponseCreate(BaseModel):
+    """One approved MI response, in the words the company has approved."""
+
+    clinic_id: str
+    product_id: str
+    language: str = "en"
+    category: str
+    response_body: str
+    approved_by: str = ""
+
+
 # ─── Helpers ────────────────────────────────────────────────────────────────
 def _uuid(value: str, what: str) -> uuid.UUID:
     try:
@@ -194,6 +233,18 @@ def _language(value: str) -> str:
     """A supported notification language, or English."""
     code = str(value or "").lower()
     return code if code in PV_LANGUAGES else "en"
+
+
+def _slot_key(language: str, category: str) -> str:
+    """Canonical (language, category) key for a knowledge-base slot.
+
+    The unit of versioning: exactly one live response per slot. Normalised so
+    "Dosing" and "dosing " are the same slot rather than two half-populated
+    ones, and so a slot key can be compared straight out of a row.
+    """
+    lang = " ".join(str(language or "").lower().split())
+    cat = " ".join(str(category or "").lower().split())
+    return f"{lang}|{cat}"
 
 
 def _contact_text(data: PvCaseCreate) -> str:
@@ -286,6 +337,217 @@ async def import_products_ep(data: ProductImport, user=Depends(get_current_user)
         "imported": len(imported),
         "product_ids": imported,
         "errors": errors,
+    }
+
+
+# ─── MI approved-content knowledge base (identity-gated, slice 2D) ───────────
+# Phase 1 could only log an MI question and route it to Medical Affairs. These
+# three routes add the answer the desk is ALLOWED to give, in the company's own
+# approved wording, and the path that applies it to a stored inquiry.
+#
+# The rules are not here. Which version is answerable, whether the answer may
+# speak at all, and whether the enquirer's words are also reportable are decided
+# by app/services/medical_info.py from rows this router already knows how to
+# fetch — so every decision is unit-tested without a database and the router
+# stays a thin adapter, exactly like the dashboard slice.
+#
+# THE ANSWER PATH NEVER CREATES A CASE. An inquiry whose words carry AE/PQC
+# content is flagged (suggest_report_to_pv) and the intake path owns the
+# one-business-day handoff; a second writer would be a second, competing source
+# of truth for the same report.
+
+
+def _response_row(row) -> dict:
+    """Serialize a ProductResponse row (the audit view of approved content)."""
+    return {
+        "id": str(row.id),
+        "product_id": str(row.product_id),
+        "language": row.language,
+        "category": row.category,
+        "response_body": row.response_body,
+        "version": row.version,
+        "is_active": bool(row.is_active),
+        "approved_by": row.approved_by,
+        "approved_at": _iso(row.approved_at),
+        "created_at": _iso(row.created_at),
+    }
+
+
+@router.post("/responses")
+async def create_response_ep(data: ProductResponseCreate, user=Depends(get_current_user)):
+    """Approve a response and store it as the next version of that slot.
+
+    A (product, language, category) slot has at most ONE live version: pushing
+    this one DEACTIVATES the rows it supersedes rather than editing or deleting
+    them, so the wording an enquirer actually received stays readable beside the
+    wording that replaced it. The version number comes from
+    medical_info.next_version over this slot's existing versions.
+    """
+    cid = _uuid(data.clinic_id, "clinic_id")
+    product_id = _uuid(data.product_id, "product_id")
+    category = data.category.strip()
+    body = data.response_body.strip()
+    if not category:
+        raise HTTPException(status_code=422, detail="category is required")
+    if not body:
+        raise HTTPException(status_code=422, detail="response_body is required")
+
+    # Cross-clinic writes are refused as a 404 rather than a 403: a caller must
+    # not be able to learn that a product id exists in another tenant.
+    product = await get_product(product_id)
+    if product is None or str(product.clinic_id) != str(cid):
+        raise HTTPException(status_code=404, detail="product not found")
+
+    language = _language(data.language)
+    existing = await list_responses(product_id)
+    slot_key = _slot_key(language, category)
+    slot = [row for row in existing if _slot_key(row.language, row.category) == slot_key]
+    version = next_version([row.version for row in slot])
+
+    created = await create_response(
+        clinic_id=cid,
+        product_id=product_id,
+        language=language,
+        category=category,
+        response_body=body,
+        version=version,
+        is_active=True,
+        approved_by=data.approved_by.strip() or None,
+        approved_at=_now(),
+    )
+
+    superseded = []
+    for prior in slot:
+        if prior.is_active and await update_response_status(prior.id, False):
+            superseded.append({"id": str(prior.id), "version": prior.version})
+
+    await create_compliance_event(
+        clinic_id=cid,
+        event_type=PV_RESPONSE_EVENT,
+        severity="medium",
+        description=(
+            f"approved MI response product={product_id} category={category} "
+            f"language={language} version={version} "
+            f"superseded={len(superseded)} "
+            f"approved_by={data.approved_by.strip() or 'unrecorded'}"
+        ),
+    )
+
+    return {
+        "status": "created",
+        "version": version,
+        "response": _response_row(created),
+        "superseded": superseded,
+    }
+
+
+@router.get("/responses")
+async def list_responses_ep(
+    product_id: str, user=Depends(get_current_user)
+):
+    """A product's approved-content history, newest version first (audit view).
+
+    Superseded rows are INCLUDED and marked, because the question an auditor
+    asks is "what was the approved wording on the day of that call?" — which the
+    live-only view cannot answer. `answerable_version` names the row that would
+    serve an inquiry today, per (language, category) slot.
+    """
+    pid = _uuid(product_id, "product_id")
+    product = await get_product(pid)
+    if product is None:
+        raise HTTPException(status_code=404, detail="product not found")
+
+    rows = await list_responses(pid)
+    # The answerable version per slot is the HIGHEST live one — a slot is
+    # meant to hold exactly one, but a hand-edited row must not make this view
+    # name a version the answer path would refuse.
+    live: dict = {}
+    for row in rows:
+        if not row.is_active:
+            continue
+        key = _slot_key(row.language, row.category)
+        live[key] = max(live.get(key, 0), row.version)
+
+    responses = []
+    for row in rows:
+        entry = _response_row(row)
+        entry["answerable_version"] = live.get(_slot_key(row.language, row.category))
+        responses.append(entry)
+    return {"product_id": str(pid), "responses": responses, "count": len(responses)}
+
+
+@router.post("/inquiries/{inquiry_id}/answer")
+async def answer_medical_inquiry_ep(
+    inquiry_id: str, user=Depends(get_current_user)
+):
+    """Answer one stored MI inquiry from approved content only.
+
+    Three possible outcomes, all produced by the pure service from the rows
+    fetched here: the approved response (verbatim, with its version), the
+    product's own approved label section (verbatim), or the fixed
+    NO_MEDICAL_ADVICE phrase. The FIRST TWO close the inquiry; the refusal does
+    NOT — it stays `open` because it promises a Medical Affairs follow-up, and
+    an inquiry nobody followed up is a worse record than an open one.
+
+    Every outcome is persisted to medical_inquiries.response_text and audited
+    (pv_inquiry_answered), so the trail shows which approved wording was used,
+    or that none existed. A refusal is a record too: the gap in the knowledge
+    base is exactly what a quality review needs to see.
+    """
+    iid = _uuid(inquiry_id, "inquiry_id")
+    inquiry = await get_medical_inquiry(iid)
+    if inquiry is None:
+        raise HTTPException(status_code=404, detail="inquiry not found")
+
+    # No product means no approved content to speak from, so the service gets
+    # neither a response list nor a label and its refusal is the answer.
+    product = await get_product(inquiry.product_id) if inquiry.product_id else None
+    rows = await list_responses(inquiry.product_id) if product is not None else []
+
+    answered = answer_medical_inquiry(
+        inquiry,
+        rows,
+        product.approved_label_json if product is not None else None,
+    )
+    refused = answered["source"] == "no_medical_advice"
+
+    await update_medical_inquiry_answer(
+        iid,
+        answered["answer"],
+        status="open" if refused else "answered",
+    )
+    await create_compliance_event(
+        clinic_id=inquiry.clinic_id,
+        event_type=PV_INQUIRY_ANSWERED_EVENT,
+        severity="high" if answered["suggest_report_to_pv"] else "medium",
+        description=(
+            f"MI inquiry answered source={answered['source']} "
+            f"category={answered['category']} language={answered['language']} "
+            f"version={answered['version'] if answered['version'] else 'none'} "
+            f"follow_up_required={refused} "
+            f"suggest_report_to_pv={answered['suggest_report_to_pv']} "
+            f"case_created=false"
+        ),
+    )
+
+    return {
+        "inquiry_id": str(iid),
+        "status": "open" if refused else "answered",
+        "answer": answered["answer"],
+        "source": answered["source"],
+        "version": answered["version"],
+        "reasoning": answered["reasoning"],
+        "category": answered["category"],
+        "language": answered["language"],
+        "requires_medical_affairs_follow_up": refused,
+        "suggest_report_to_pv": answered["suggest_report_to_pv"],
+        "report_reasons": answered["report_reasons"],
+        "case_created": False,
+        "note": (
+            "approved content or the product's approved label only; anything "
+            "else is the fixed NO_MEDICAL_ADVICE phrase. Reportable content is "
+            "flagged for the PVOIC — this endpoint never opens a case."
+        ),
     }
 
 

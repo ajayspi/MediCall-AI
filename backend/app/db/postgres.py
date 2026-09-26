@@ -828,6 +828,67 @@ class MedicalInquiry(Base):
         )
 
 
+class ProductResponse(Base):
+    """One approved MI response, versioned per (product, language, category).
+
+    Phase-2 slice 2D. Rows are APPENDED, never edited: a new version
+    deactivates the previous one (is_active = FALSE) so the answer a caller
+    actually received stays readable next to the wording that replaced it. The
+    version number itself is minted by services.medical_info.next_version — this
+    layer only stores what it is given.
+    """
+
+    __tablename__ = "product_responses"
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id",
+            "language",
+            "category",
+            "version",
+            name="uq_product_responses_version",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("clinics.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    language: Mapped[str] = mapped_column(String(5), nullable=False)
+    category: Mapped[str] = mapped_column(String(40), nullable=False)
+    # Approved wording, stored verbatim. The answer path returns it unchanged.
+    response_body: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    # FALSE = superseded or withdrawn: readable for audit, never answerable.
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Who signed the wording off. An answer with no approver is not approved.
+    approved_by: Mapped[Optional[str]] = mapped_column(String(255))
+    approved_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz, onupdate=now_tz
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ProductResponse id={self.id} product={self.product_id} "
+            f"cat={self.category} lang={self.language} v={self.version} "
+            f"active={self.is_active}>"
+        )
+
+
 # ─── Session Management ────────────────────────────────────────────────────
 
 
@@ -1349,6 +1410,12 @@ async def list_products(
         return list(result.scalars().all())
 
 
+async def get_product(product_id: uuid.UUID) -> Optional[Product]:
+    """Get one product by ID (the MI answer path needs its approved label)."""
+    async with SessionFactory() as session:
+        return await session.get(Product, product_id)
+
+
 async def create_adverse_event(clinic_id: uuid.UUID, **fields) -> AdverseEvent:
     """Persist one individual case safety report.
 
@@ -1495,6 +1562,172 @@ async def list_medical_inquiries(
         query = query.order_by(MedicalInquiry.created_at.desc())
         result = await session.execute(query)
         return list(result.scalars().all())
+
+
+async def get_medical_inquiry(inquiry_id: uuid.UUID) -> Optional[MedicalInquiry]:
+    """Get one medical information inquiry by ID (the answer path's target)."""
+    async with SessionFactory() as session:
+        return await session.get(MedicalInquiry, inquiry_id)
+
+
+async def update_medical_inquiry_answer(
+    inquiry_id: uuid.UUID,
+    response_text: str,
+    status: str = "answered",
+) -> bool:
+    """Record an MI answer (or the NO_MEDICAL_ADVICE phrase) on the inquiry.
+
+    The caller decides `status`: approved content and label answers are
+    `answered`, while a refusal stays `open` for the Medical Affairs follow-up
+    the phrase promises. The text is written verbatim, so the stored record is
+    exactly what the enquirer was given. Returns True if a row was updated.
+    """
+    async with SessionFactory() as session:
+        stmt = (
+            update(MedicalInquiry)
+            .where(MedicalInquiry.id == inquiry_id)
+            .values(response_text=response_text, status=status, updated_at=now_tz())
+            .returning(MedicalInquiry.id)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one_or_none() is not None
+
+
+# ─── MI approved-content knowledge base (spec-micc-pv-phase2.md slice 2D) ───
+# Thin persistence, as with the rest of this module: WHICH version is answerable
+# and WHICH wording a caller may be given is decided by
+# app/services/medical_info.py, not here.
+
+
+async def create_response(
+    clinic_id: uuid.UUID,
+    product_id: uuid.UUID,
+    language: str,
+    category: str,
+    response_body: str,
+    version: int = 1,
+    is_active: bool = True,
+    approved_by: Optional[str] = None,
+    approved_at: Optional[datetime] = None,
+) -> ProductResponse:
+    """Append one approved response version for a product.
+
+    `version` is passed in, not derived: the caller mints it with
+    medical_info.next_version so the number that answers a call and the number
+    stored here are the same decision, made once.
+    """
+    async with SessionFactory() as session:
+        stmt = (
+            insert(ProductResponse)
+            .values(
+                clinic_id=clinic_id,
+                product_id=product_id,
+                language=language,
+                category=category,
+                response_body=response_body,
+                version=version,
+                is_active=is_active,
+                approved_by=approved_by,
+                approved_at=approved_at,
+            )
+            .returning(ProductResponse)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one()
+
+
+async def list_responses(
+    product_id: uuid.UUID,
+    language: Optional[str] = None,
+    category: Optional[str] = None,
+    limit: int = 200,
+) -> list[ProductResponse]:
+    """Every version of a product's approved content, newest version first.
+
+    The audit view, so it deliberately does NOT filter is_active: a superseded
+    response has to stay readable. The answer path takes the live version from
+    this list (or from latest_approved_response) and the service applies the
+    version rule, so both readers agree.
+    """
+    async with SessionFactory() as session:
+        query = select(ProductResponse).where(ProductResponse.product_id == product_id)
+        if language:
+            query = query.where(ProductResponse.language == language)
+        if category:
+            query = query.where(ProductResponse.category == category)
+        query = query.order_by(
+            ProductResponse.category.asc(),
+            ProductResponse.language.asc(),
+            ProductResponse.version.desc(),
+        )
+        result = await session.execute(query)
+        return list(result.scalars().all())[: max(1, min(limit, 500))]
+
+
+async def latest_approved_response(
+    product_id: uuid.UUID,
+    category: str,
+    language: Optional[str] = None,
+) -> Optional[ProductResponse]:
+    """The highest ACTIVE version for a (product, category[, language]).
+
+    The database-side twin of the service's version rule, for a caller that
+    wants one row rather than the whole history. Superseded rows (is_active
+    FALSE) are excluded here too, so a withdrawn version cannot be served.
+    """
+    async with SessionFactory() as session:
+        query = (
+            select(ProductResponse)
+            .where(
+                ProductResponse.product_id == product_id,
+                ProductResponse.category == category,
+                ProductResponse.is_active.is_(True),
+            )
+            .order_by(ProductResponse.version.desc())
+            .limit(1)
+        )
+        if language:
+            query = query.where(ProductResponse.language == language)
+        result = await session.execute(query)
+        return result.scalar_one_or_none()
+
+
+async def update_response_status(
+    response_id: uuid.UUID, is_active: bool
+) -> bool:
+    """Activate or deactivate one response version (supersession).
+
+    Deactivation is the whole of "replace": the old row keeps its wording,
+    version and approver, so the audit view can still show what the enquirer was
+    told before the change. Returns True if a row was updated.
+    """
+    async with SessionFactory() as session:
+        stmt = (
+            update(ProductResponse)
+            .where(ProductResponse.id == response_id)
+            .values(is_active=is_active, updated_at=now_tz())
+            .returning(ProductResponse.id)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one_or_none() is not None
+
+
+async def delete_response(response_id: uuid.UUID) -> bool:
+    """Hard-delete one response version.
+
+    NOT part of the replace flow — supersession deactivates instead, so an
+    approved answer stays auditable. This exists for a row created in error
+    (a test fixture, a mistyped product) and is deliberately separate from the
+    versioning helpers so the two can never be confused.
+    """
+    async with SessionFactory() as session:
+        stmt = delete(ProductResponse).where(ProductResponse.id == response_id)
+        result = await session.execute(stmt)
+        await session.commit()
+        return bool(result.rowcount)
 
 
 async def create_notification(

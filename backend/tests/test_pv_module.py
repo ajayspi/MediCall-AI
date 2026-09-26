@@ -1175,6 +1175,12 @@ PV_ROUTES = {
     ("get", "/dashboard"),
     ("get", "/dashboard/psur"),
     ("get", "/audit"),
+    # Phase-2 slice 2D: the MI approved-content knowledge base. The version
+    # contracts live in test_medical_info.py; the route set is here so no PV
+    # endpoint can be added or dropped without this test noticing.
+    ("post", "/responses"),
+    ("get", "/responses"),
+    ("post", "/inquiries/{inquiry_id}/answer"),
 }
 
 SERVICE_GUARDED = ("create_pv_case_ep",)
@@ -1189,6 +1195,11 @@ IDENTITY_GATED = (
     "pv_dashboard_ep",
     "pv_dashboard_psur_ep",
     "pv_audit_ep",
+    # Phase-2 slice 2D: the knowledge base is written by a Medical Affairs
+    # officer on a logged-in session, never by the tokenless intake path.
+    "create_response_ep",
+    "list_responses_ep",
+    "answer_medical_inquiry_ep",
 )
 
 

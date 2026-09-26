@@ -316,6 +316,35 @@ CREATE TABLE IF NOT EXISTS medical_inquiries (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Approved-content knowledge base for medical information (spec-micc-pv-phase2
+-- slice 2D). Phase 1 could only log an MI question and route it to Medical
+-- Affairs; this table holds the ANSWER the desk is allowed to give, per
+-- (product, language, category), in the company's own approved wording.
+--
+-- VERSIONED, NOT EDITED. Pushing a new version DEACTIVATES the previous one
+-- (is_active = FALSE) rather than overwriting or deleting it: an MI answer is
+-- read back in quality review and in an audit, so a withdrawn response has to
+-- stay visible with its approver and timestamp. Only the highest is_active
+-- version per (product, language, category) is answerable.
+CREATE TABLE IF NOT EXISTS product_responses (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    clinic_id UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    language TEXT NOT NULL,
+    category TEXT NOT NULL, -- dosing, indication, side_effect, interactions, storage, pregnancy, other
+    response_body TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    is_active BOOLEAN DEFAULT TRUE,
+    -- Who signed the wording off, and when. An answer with no approver is not
+    -- approved content, which is why the answer path reads is_active.
+    approved_by TEXT,
+    approved_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT uq_product_responses_version
+        UNIQUE (product_id, language, category, version)
+);
+
 -- Indexes for call center performance (critical for high-concurrency workload)
 CREATE INDEX idx_calls_clinic ON calls(clinic_id);
 CREATE INDEX idx_calls_state ON calls(state);
@@ -345,6 +374,10 @@ CREATE INDEX IF NOT EXISTS idx_quality_complaints_clinic_status
     ON quality_complaints(clinic_id, investigation_status);
 CREATE INDEX IF NOT EXISTS idx_medical_inquiries_clinic_status
     ON medical_inquiries(clinic_id, status);
+-- The MI answer path's working set: one product's approved content, already
+-- narrowed to the live version per language and category.
+CREATE INDEX IF NOT EXISTS idx_product_responses_lookup
+    ON product_responses(product_id, category, language, is_active);
 
 -- Webhook idempotency (spec-payments.md Q4/A4a): at most one intent per
 -- gateway reference, so a replayed gateway webhook updates the same row.
@@ -508,6 +541,7 @@ ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE adverse_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE quality_complaints ENABLE ROW LEVEL SECURITY;
 ALTER TABLE medical_inquiries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE product_responses ENABLE ROW LEVEL SECURITY;
 
 -- FORCE the flip (spec-auth-enforcement.md): the owner (medicall) must not
 -- bypass RLS once the runtime connects as medicall_app; FORCE makes the
@@ -530,6 +564,7 @@ ALTER TABLE products FORCE ROW LEVEL SECURITY;
 ALTER TABLE adverse_events FORCE ROW LEVEL SECURITY;
 ALTER TABLE quality_complaints FORCE ROW LEVEL SECURITY;
 ALTER TABLE medical_inquiries FORCE ROW LEVEL SECURITY;
+ALTER TABLE product_responses FORCE ROW LEVEL SECURITY;
 
 -- Clinic owners see their own clinic data
 CREATE POLICY clinic_own_data ON clinics
@@ -678,6 +713,19 @@ CREATE POLICY medical_inquiries_manage ON medical_inquiries
         OR current_setting('app.service_request', true) = 'on'
     );
 
+-- The MI approved-content knowledge base (spec-micc-pv-phase2.md slice 2D):
+-- clinic staff manage their own clinic's approved wording — same scope and the
+-- same service bypass as medical_inquiries_manage, because a response is
+-- written by a Medical Affairs officer on a logged-in session, never by the
+-- tokenless intake path.
+CREATE POLICY product_responses_manage ON product_responses
+    FOR ALL USING (
+        clinic_id IN (
+            SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
+        )
+        OR current_setting('app.service_request', true) = 'on'
+    );
+
 -- Clinic memberships: users read their own rows; a clinic owner reads their
 -- clinic's rows; ONLY the server-side service path may INSERT them this phase
 -- (create_clinic assigns the creator's owner row; the future staff-add
@@ -721,6 +769,7 @@ GRANT ALL ON products TO authenticated;
 GRANT ALL ON adverse_events TO authenticated;
 GRANT ALL ON quality_complaints TO authenticated;
 GRANT ALL ON medical_inquiries TO authenticated;
+GRANT ALL ON product_responses TO authenticated;
 GRANT USAGE, SELECT ON sequence language_codes_id_seq TO authenticated;
 
 -- Grant permissions for the API runtime role (medicall_app) — identical surface
@@ -739,6 +788,7 @@ GRANT ALL ON products TO medicall_app;
 GRANT ALL ON adverse_events TO medicall_app;
 GRANT ALL ON quality_complaints TO medicall_app;
 GRANT ALL ON medical_inquiries TO medicall_app;
+GRANT ALL ON product_responses TO medicall_app;
 GRANT SELECT ON language_codes TO medicall_app;
 GRANT USAGE, SELECT ON sequence language_codes_id_seq TO medicall_app;
 
