@@ -35,6 +35,7 @@ import {
   pvPsur as mockPvPsur,
   pvAudit as mockPvAudit,
   pvCases as mockPvCases,
+  pvCase as mockPvCase,
 } from "@/components/mock";
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
@@ -1571,4 +1572,232 @@ export function usePvCases(
   const useFallback = USE_MOCK === "true" || (USE_MOCK !== "false" && q.isError);
   const shown = useFallback ? filterPvCases(mockPvCases, status, seriousOnly) : rows;
   return { rows: shown, kpis: pvCaseKpis(shown) };
+}
+
+// ---- Case detail + export (phase-2.6, spec-micc-pv-phase26.md) ------------
+// The queue ends at a row. This is the other half: the ONE case behind that row
+// (GET /api/pv/cases/{case_id}, the same _case_row the print sheet and both e2b
+// routes build from) and the four ways a PVOIC takes it away as a file.
+
+/** The WHO-UMC stamp, exactly as app/services/coding.py captures it. */
+export type ApiPvCoding = {
+  coded: boolean;
+  reason: string;
+  dictionary: string;
+  event: { code: string; pt: string; soc: string; hlt: string } | null;
+  drug: { code: string; name: string } | null;
+  drug_coded: boolean;
+};
+
+/** GET /api/pv/cases/{case_id} - app/api/pv.py::_case_row, key for key. */
+export type ApiPvCaseDetail = {
+  id: string;
+  case_type: string;
+  clinic_id: string;
+  call_id: string | null;
+  product_id: string | null;
+  reporter_type: string;
+  reporter_contact: Record<string, string>;
+  patient_age: string;
+  patient_sex: string;
+  patient_initials: string;
+  event_text: string;
+  event_onset_date: string;
+  outcome: string;
+  seriousness_flags: string[];
+  expectedness: string;
+  causality_reporter: string;
+  reporter_causality: string;
+  reviewer_causality: string;
+  reviewed_by: string;
+  reviewed_at: string;
+  coding: ApiPvCoding | Record<string, never>;
+  e2b_minimum_met: boolean;
+  status: string;
+  received_at: string;
+  notification_deadline: string;
+  notified_at: string;
+  source_channel: string;
+  recording_consent: boolean;
+};
+
+/** A reporter contact is free-form (`{}` until captured) - read, never assumed. */
+export type PvReporterEntry = { label: string; value: string };
+
+export type PvCaseDetailView = {
+  id: string;
+  caseType: string;
+  clinicId: string;
+  callId: string;
+  product: string;
+  reporterType: string;
+  reporter: PvReporterEntry[];
+  patient: string;
+  eventText: string;
+  eventOnsetDate: string;
+  outcome: string;
+  isSerious: boolean;
+  criteria: string[];
+  expectedness: string;
+  causalityReporter: string;
+  reporterCausality: string;
+  reviewerCausality: string;
+  reviewedBy: string;
+  reviewedAt: string;
+  coding: {
+    coded: boolean;
+    dictionary: string;
+    reason: string;
+    event: { code: string; pt: string; soc: string; hlt: string } | null;
+    drug: { code: string; name: string } | null;
+  };
+  e2bMinimumMet: boolean;
+  status: string;
+  receivedAt: string;
+  deadline: string;
+  daysRemaining: number;
+  overdue: boolean;
+  notifiedAt: string;
+  sourceChannel: string;
+  recordingConsent: boolean;
+};
+
+function pvReporterEntries(contact: Record<string, string>): PvReporterEntry[] {
+  return Object.entries(contact ?? {})
+    .filter(([, value]) => Boolean(value))
+    .map(([label, value]) => ({ label: pvLabel(label), value }));
+}
+
+/**
+ * Days from today until `iso` - the ONLY clock arithmetic on this page.
+ *
+ * The detail route returns the case, not a countdown, so the day count is
+ * computed here from the same notification_deadline the server wrote (it is
+ * derived there by the Phase-1 compute_reporting_deadline, and never re-derived
+ * from a second rule here). Negative is overdue; this is a read of a stored
+ * date, not a ticking timer, so nothing in the console counts down.
+ */
+export function daysUntil(iso: string): number {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 0;
+  const today = new Date();
+  const startOfToday = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  const startOfDay = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  return Math.round((startOfDay - startOfToday) / 86_400_000);
+}
+
+export function toPvCaseDetailView(c: ApiPvCaseDetail): PvCaseDetailView {
+  const coding = (c.coding ?? {}) as ApiPvCoding;
+  const days = daysUntil(c.notification_deadline);
+  return {
+    id: c.id,
+    caseType: c.case_type || "AE",
+    clinicId: c.clinic_id,
+    callId: c.call_id ?? "",
+    product: c.product_id ? c.product_id.slice(0, 8).toUpperCase() : "—",
+    reporterType: c.reporter_type || "—",
+    reporter: pvReporterEntries(c.reporter_contact),
+    patient: pvPatientLabel(c as unknown as ApiPvCase),
+    eventText: c.event_text || "—",
+    eventOnsetDate: c.event_onset_date || "",
+    outcome: c.outcome || "—",
+    isSerious: (c.seriousness_flags ?? []).length > 0,
+    criteria: c.seriousness_flags ?? [],
+    expectedness: c.expectedness || "—",
+    causalityReporter: c.causality_reporter || "",
+    reporterCausality: c.reporter_causality || "",
+    reviewerCausality: c.reviewer_causality || "",
+    reviewedBy: c.reviewed_by || "",
+    reviewedAt: c.reviewed_at || "",
+    coding: {
+      coded: Boolean(coding.coded),
+      dictionary: coding.dictionary || "",
+      reason: coding.reason || "",
+      event: coding.event ?? null,
+      drug: coding.drug ?? null,
+    },
+    e2bMinimumMet: Boolean(c.e2b_minimum_met),
+    status: c.status,
+    receivedAt: c.received_at,
+    deadline: c.notification_deadline,
+    daysRemaining: days,
+    overdue: days < 0,
+    notifiedAt: c.notified_at || "",
+    sourceChannel: c.source_channel || "—",
+    recordingConsent: Boolean(c.recording_consent),
+  };
+}
+
+export function usePvCase(id: string) {
+  const q = useQuery({
+    queryKey: ["pv-case", id],
+    queryFn: () => authFetch<ApiPvCaseDetail>(`/api/pv/cases/${encodeURIComponent(id)}`),
+    enabled: Boolean(id) && USE_MOCK !== "true",
+  });
+  // The fixture is ONE case; asking for a different id offline must not show
+  // you someone else's adverse event, so the fallback is id-matched and an
+  // unknown id renders nothing rather than a plausible stranger.
+  const useFallback =
+    USE_MOCK === "true" || (USE_MOCK !== "false" && (q.isError || !q.data));
+  const view = q.data ? toPvCaseDetailView(q.data) : null;
+  const fixture = useFallback ? mockPvCase : null;
+  const shown =
+    fixture && fixture.id.toLowerCase() === id.toLowerCase() ? fixture : view;
+  return { case: shown, isMock: Boolean(fixture) };
+}
+
+// ---- Authed downloads -------------------------------------------------------
+// A download is an ordinary authed request that happens to end in a Blob. The
+// bearer token lives in localStorage, so a plain <a href> cannot carry it: the
+// browser would send the URL with no Authorization header and the export would
+// 401 - which reads to an officer as a broken button, not as "log in again".
+// These two helpers are the ONLY place the app turns a response into a file.
+
+/** A non-ok download, carrying the server's own words. */
+export type PvDownloadError = { status: number; detail: string };
+
+async function downloadError(res: Response, verb: string, path: string): Promise<PvDownloadError> {
+  // The gate refuses in JSON (`detail`), so the reason is always in the body —
+  // but a proxy can answer with HTML, and the officer must see SOMETHING true
+  // rather than "[object Object]".
+  let detail = `${verb} ${path} failed (${res.status})`;
+  try {
+    const body = await res.json();
+    if (body && typeof body.detail === "string" && body.detail) {
+      detail = body.detail;
+    }
+  } catch {
+    // not JSON - keep the synthesized message
+  }
+  return { status: res.status, detail };
+}
+
+export async function authDownload(path: string): Promise<Blob> {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}${path}`, { headers });
+  if (!res.ok) {
+    const err = await downloadError(res, "GET", path);
+    throw err satisfies PvDownloadError;
+  }
+  return res.blob();
+}
+
+export async function authDownloadPost(path: string, body: unknown): Promise<Blob> {
+  const token = getToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await downloadError(res, "POST", path);
+    throw err satisfies PvDownloadError;
+  }
+  return res.blob();
 }

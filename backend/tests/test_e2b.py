@@ -174,6 +174,25 @@ def fn_block(text: str, name: str) -> str:
     return "".join(lines[node.lineno - 1 : node.end_lineno])
 
 
+def fn_code(text: str, name: str) -> str:
+    """The function's EXECUTABLE body - docstring removed.
+
+    The hybrid-auth ordering pins must read CODE, not prose: this route's
+    docstring is required to name both callers and the shared gate, so a naive
+    .index() would find the mention in the comment and pin the wrong thing.
+    """
+    node = fns(py_tree_text(text)).get(name)
+    if node is None:
+        return ""
+    body = list(node.body)
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]
+    if not body:
+        return ""
+    lines = text.splitlines(keepends=True)
+    return "".join(lines[body[0].lineno - 1 : node.end_lineno])
+
+
 def module_import_roots(text: str) -> set:
     roots = set()
     tree = py_tree_text(text)
@@ -699,6 +718,7 @@ E2B_SUBMIT_ROUTE = ("post", "/cases/{case_id}/e2b")
 E2B_XML_ENDPOINT = "get_pv_case_e2b_xml_ep"
 E2B_SUBMIT_ENDPOINT = "prepare_pv_case_e2b_submission_ep"
 E2B_GATEWAY_HELPER = "_e2b_case"
+E2B_IDENTITY_HELPER = "_staff_identity_or_none"
 
 
 class TestE2BRouter(unittest.TestCase):
@@ -717,11 +737,53 @@ class TestE2BRouter(unittest.TestCase):
                 self.assertIn(route, found)
 
     def test_e2b_xml_route_is_service_token_guarded(self):
+        """Phase-2.6: the machine contract is ADDITIVE, never replaced.
+
+        The X-Service-Token compare is still the first thing the route does and
+        is still constant-time — a safety system holding only the shared token
+        must keep working exactly as it did. What changed is that a failure of
+        that check no longer ends the request: the route then offers the SAME
+        validation get_current_user performs, so a logged-in PVOIC can download
+        the artifact from the browser.
+        """
         block = fn_block(self.text, E2B_XML_ENDPOINT)
         self.assertIn("WEBHOOK_SERVICE_TOKEN", block, "mirror the intake token check")
         self.assertIn("X-Service-Token", block)
         self.assertIn("hmac", block, "token compare must be constant-time")
-        self.assertNotIn("get_current_user", block, "the XML path is service-token gated")
+
+    def test_e2b_xml_identity_fallback_reuses_the_auth_primitive(self):
+        """The staff path must not re-implement JWT parsing anywhere."""
+        block = fn_block(self.text, E2B_XML_ENDPOINT)
+        self.assertIn(
+            "get_current_user", block,
+            "the fallback must call the auth router's own dependency, not a copy",
+        )
+        helper = fn_block(self.text, E2B_IDENTITY_HELPER)
+        self.assertIn("get_current_user", helper, "reuse the validation primitive itself")
+        self.assertNotIn("decode_token", self.text, "JWT decoding stays in the auth router")
+
+    def test_service_token_is_tried_before_the_identity(self):
+        """Ordering is the whole safety argument: machine first, staff second."""
+        code = fn_code(self.text, E2B_XML_ENDPOINT)
+        self.assertLess(
+            code.index("X-Service-Token"),
+            code.index(E2B_IDENTITY_HELPER),
+            "the service-token check must be attempted FIRST",
+        )
+
+    def test_neither_token_nor_identity_is_401(self):
+        code = fn_code(self.text, E2B_XML_ENDPOINT)
+        self.assertIn("401", code, "no credential at all is a 401, not a 403 or a 500")
+        self.assertIn("service token or staff identity", code, "name both accepted callers")
+
+    def test_both_callers_run_the_one_export_gate(self):
+        """A 409 for an unstamped expedited case must reach the UI too."""
+        code = fn_code(self.text, E2B_XML_ENDPOINT)
+        self.assertLess(
+            code.index(E2B_IDENTITY_HELPER),
+            code.index(E2B_GATEWAY_HELPER),
+            "auth decides WHO may ask; the gate decides WHETHER they may have it",
+        )
 
     def test_e2b_xml_route_returns_xml_content_type(self):
         block = fn_block(self.text, E2B_XML_ENDPOINT)

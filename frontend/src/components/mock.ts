@@ -341,6 +341,58 @@ export const pvCases = [
   },
 ];
 
+// The ONE case the detail page renders (phase-2.6), shaped as the hook's
+// PvCaseDetailView. It is the queue's first row — a serious, hospitalised,
+// UNEXPECTED ankle-swelling report — carried all the way through: the WHO-UMC
+// stamp a reviewer has signed, the MedDRA-style coding, the India clock already
+// 3 days blown, and NOT yet notified. That combination is the one worth
+// demoing: it is exactly the expedited case the export gate (409) refuses until
+// a named reviewer has stamped it, so the officer can see the stamp, the clock
+// and the gate's reason on one screen. Indian context throughout: +91 reporter.
+export const pvCase = {
+  id: "3F9A1C2E",
+  caseType: "AE",
+  clinicId: "8f2c1d44-0a6b-4a71-9c3e-5b7d9e0f1a22",
+  callId: "c41d9e77-2b83-4a19-9f60-1d2e3f4a5b6c",
+  product: "9C41B0A2",
+  reporterType: "consumer",
+  reporter: [
+    { label: "Name", value: "Sunita Rathore" },
+    { label: "Phone", value: "+91 98204 41120" },
+    { label: "Email", value: "" },
+  ],
+  patient: "R.K. · 54 y · F",
+  eventText:
+    "After the second tablet of Amlodipine her ankles were swollen and she could not walk properly for two days.",
+  eventOnsetDate: "2026-09-05",
+  outcome: "recovering",
+  isSerious: true,
+  criteria: ["hospitalisation"],
+  expectedness: "unexpected",
+  causalityReporter:
+    "Says the swelling started only after the second tablet and stopped when she was given the water tablet.",
+  reporterCausality: "possible",
+  reviewerCausality: "probable",
+  reviewedBy: "Dr. A. Iyer (Medical Safety Reviewer)",
+  reviewedAt: "2026-09-19T10:40:00+00:00",
+  coding: {
+    coded: true,
+    dictionary: "MedDRA (installed)",
+    reason: "",
+    event: { code: "10038734", pt: "Oedema peripheral", soc: "10037073", hlt: "10037074" },
+    drug: { code: "06686", name: "Amlodipine" },
+  },
+  e2bMinimumMet: true,
+  status: "open",
+  receivedAt: "2026-09-05T09:15:00+00:00",
+  deadline: "2026-09-20T09:15:00+00:00",
+  daysRemaining: -3,
+  overdue: true,
+  notifiedAt: "",
+  sourceChannel: "call",
+  recordingConsent: true,
+};
+
 export const pvPsur = {
   schedule: "6-monthly x2y, then annual x2y",
   anchorField: "created_at",

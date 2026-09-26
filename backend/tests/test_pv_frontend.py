@@ -77,6 +77,22 @@ PV_HOOKS = (
 )
 PV_MOCK_KEYS = ("pvDashboard", "pvPsur", "pvAudit", "pvCases")
 
+# ─── Phase-2.6: the case detail page + the export actions ───────────────────
+# RED before implementation (spec-micc-pv-phase26.md, approved): the queue ends
+# at a row. There is no /pv/cases/[id] page, so a PVOIC can see that a case is
+# 3 days overdue but cannot see WHO reviewed it, WHAT was coded, or take the
+# artifact away. The .e2b.xml GET was service-token-only, so a browser could not
+# fetch it at all, and there was no helper that turns a fetch into a file.
+CASE_DETAIL_PAGE = "cases/[id]/page.tsx"
+# The three client exports 2.6 adds. The ENDPOINTS they reach are pinned on the
+# page instead, because the two download helpers are deliberately generic
+# (path in, Blob out) and only the caller knows which artifact it wants.
+PV_DETAIL_EXPORTS = ("usePvCase", "authDownload", "authDownloadPost")
+# The four ways a PVOIC takes a case away, as LABEL text on the page.
+EXPORT_LABELS = ("E2B XML", "JSON", "CSV", "Print view")
+# The print sheet is a server route, not a link: /cases/{id}/print
+PRINT_ROUTE = "/print"
+
 PVOIC_IDENTITY = ("PVOIC Officer", "MediCall PV & Medical Information")
 
 # ─── Tailwind v4 token namespaces (read from globals.css @theme) ────────────
@@ -139,19 +155,34 @@ def nav_hrefs(const_name: str):
 
 
 def export_block(text: str, name: str) -> str:
-    """The source of `export function <name>` up to the next `export function`."""
-    start = text.find(f"export function {name}")
-    if start < 0:
+    """The source of `export [async] function <name>` up to the next export.
+
+    `export async function` counts too - the download helpers are async and
+    refusing to see them would make this guard a false pass. The name is
+    matched with a word boundary, so `usePvCase` never resolves to
+    `usePvCases`: a prefix match would let the 2.5 pin and the 2.6 pin read the
+    same function and both pass for the wrong reason.
+    """
+    m = re.search(
+        rf"^export (?:async )?function {re.escape(name)}\b", text, re.M
+    )
+    if m is None:
         return ""
-    rest = text.find("export function", start + 1)
+    start = m.start()
+    rest = text.find("\nexport ", start + 1)
     return text[start:] if rest < 0 else text[start:rest]
 
 
 def const_block(text: str, name: str) -> str:
-    """The source of `export const <name> = [...]` up to the next `export`."""
-    start = text.find(f"export const {name}")
-    if start < 0:
+    """The source of `export const <name> = ...` up to the next `export`.
+
+    The name is matched EXACTLY (word boundary), so `pvCase` never resolves to
+    `pvCases` - which would silently pin one fixture while reading another.
+    """
+    m = re.search(rf"^export const {re.escape(name)}\b", text, re.M)
+    if m is None:
         return ""
+    start = m.start()
     rest = text.find("\nexport ", start + 1)
     return text[start:] if rest < 0 else text[start:rest]
 
@@ -460,6 +491,308 @@ class TestPvDesignTokens(unittest.TestCase):
         """`shadow-primary-500` is a colour shadow; `shadow-primry-500` is nothing."""
         self.assertTrue(resolves("shadow-primary-500/20", theme_tokens()))
         self.assertFalse(resolves("shadow-primry-500/20", theme_tokens()))
+
+
+# ─── Phase-2.6: case detail + export actions ────────────────────────────────
+
+def detail_page() -> Path:
+    return PV_APP / "cases" / "[id]" / "page.tsx"
+
+
+def case_row_keys() -> set:
+    """The string keys `_case_row` returns, read from app/api/pv.py.
+
+    Parsed from the backend source on purpose: a hand-copied key list would
+    drift from the serializer silently, and this pin exists precisely to keep
+    the frontend honest about the shape it is allowed to render.
+    """
+    src = read(BACKEND / "app" / "api" / "pv.py")
+    start = src.find("def _case_row(")
+    if start < 0:
+        return set()
+    body_start = src.find("return {", start)
+    body_end = src.find("\n    }", body_start)
+    if body_start < 0 or body_end < 0:
+        return set()
+    body = src[body_start:body_end]
+    return set(re.findall(r'^\s{8}"([a-z0-9_]+)":', body, re.M))
+
+
+def type_block(text: str, name: str) -> str:
+    """The body of `export type <name> = { ... }`."""
+    start = text.find(f"export type {name}")
+    if start < 0:
+        return ""
+    end = text.find("\n};", start)
+    return text[start:] if end < 0 else text[start:end]
+
+
+def private_block(text: str, name: str) -> str:
+    """A module-private (non-exported) function's source, up to the next
+    top-level declaration.
+
+    `downloadError` is deliberately not exported: nothing outside api.ts should
+    be building a download refusal, because the page only renders what the two
+    helpers throw. Matching stops at a line that starts in column 0, so a `}`
+    closing an inner block does not truncate the body.
+    """
+    m = re.search(rf"^(?:export )?(?:async )?function {re.escape(name)}\b", text, re.M)
+    if m is None:
+        return ""
+    start = m.start()
+    ends = [
+        pos + 1
+        for pos in (text.find("\n}", start), text.find("\nexport ", start + 1),
+                    text.find("\nfunction ", start + 1),
+                    text.find("\nasync function ", start + 1))
+        if pos >= 0
+    ]
+    return text[start : min(ends)] if ends else text[start:]
+
+
+class TestPvCaseDetailPage(unittest.TestCase):
+    """The page is a VIEW of _case_row. It invents nothing."""
+
+    def setUp(self):
+        self.text = read(detail_page())
+
+    def test_page_exists(self):
+        self.assertTrue(detail_page().exists(), f"app/pv/{CASE_DETAIL_PAGE} missing")
+
+    def test_page_is_a_client_component(self):
+        self.assertTrue(
+            self.text.startswith('"use client"'),
+            f"pv/{CASE_DETAIL_PAGE} must start with \"use client\"",
+        )
+
+    def test_page_reads_the_case_through_the_api_client(self):
+        self.assertIn("@/lib/api", self.text, "the page must use the api client")
+        self.assertIn("usePvCase", self.text, "the detail page hangs off usePvCase")
+        self.assertNotIn(
+            "@/components/mock", self.text,
+            "mock fallback belongs in the hook, not the page (every other pv page)",
+        )
+
+    def test_page_takes_the_id_from_the_route(self):
+        self.assertIn("useParams", self.text, "the id comes from the [id] segment")
+
+    def test_page_renders_the_stamps_and_the_clock(self):
+        """Every block the spec lists, named by the view field it renders.
+
+        View keys, not API keys: the page reads PvCaseDetailView (camelCase),
+        exactly like every other page in this console.
+        """
+        for field in ("reporterCausality", "reviewerCausality", "reviewedBy",
+                      "reviewedAt", "coding", "expectedness", "outcome",
+                      "eventOnsetDate", "deadline", "e2bMinimumMet",
+                      "sourceChannel", "recordingConsent", "receivedAt",
+                      "criteria"):
+            self.assertIn(field, self.text, f"detail page must render {field}")
+
+    def test_page_invents_no_field(self):
+        """The spec's own risk row, made checkable.
+
+        The page must consume ONLY PvCaseDetailView keys. A `row.some_thing`
+        reaching for a field no mapper produces is a UI inventing case data -
+        the exact failure this guard exists to make impossible to review by
+        eye, because it is obvious only if you know _case_row by heart.
+        """
+        snake = set(re.findall(r"row\.([a-z][a-z0-9]*_[a-z0-9_]+)", self.text))
+        self.assertEqual(
+            set(), snake,
+            "the page reads snake_case off the view; those keys are not on "
+            f"PvCaseDetailView: {sorted(snake)}",
+        )
+
+    def test_detail_type_covers_the_case_row_serializer(self):
+        """api.ts's ApiPvCaseDetail must carry EVERY key _case_row returns.
+
+        Read from the backend source, not from a hand-copied list, so the pin
+        cannot drift from the serializer it claims to describe. A key the type
+        omits is a field the page cannot render, and a page that reaches for it
+        anyway is inventing data.
+        """
+        case_row = case_row_keys()
+        self.assertTrue(
+            case_row, "could not read _case_row from app/api/pv.py - guard is blind"
+        )
+        typed = type_block(read(API_TS), "ApiPvCaseDetail")
+        missing = sorted(k for k in case_row if f"\n  {k}:" not in typed)
+        self.assertEqual(
+            [], missing,
+            f"ApiPvCaseDetail omits _case_row keys: {missing}",
+        )
+
+    def test_page_derives_the_clock_with_the_shared_date_helper(self):
+        self.assertIn(
+            "formatRelativeDate", self.text,
+            "the detail page dates through the same helper the queue uses",
+        )
+        self.assertNotIn(
+            "setInterval", self.text, "a client countdown is never the record"
+        )
+
+    def test_export_actions_are_buttons_not_links(self):
+        """A Bearer lives in localStorage: a plain <a> cannot carry it.
+
+        This is the whole reason the actions are fetch-then-object-URL rather
+        than href="/api/pv/cases/.../e2b.xml" - the link would arrive with no
+        Authorization header and 401, which looks like a broken button.
+        """
+        for label in EXPORT_LABELS:
+            self.assertIn(label, self.text, f"export action {label!r} missing")
+        self.assertIn("authDownload", self.text, "downloads go through authDownload")
+        self.assertIn(
+            "authDownloadPost", self.text, "the JSON/CSV batch export posts a body"
+        )
+        self.assertNotIn(
+            'href="/api/pv', self.text,
+            "no export may be a bare <a>: the token is not in the URL",
+        )
+
+    def test_server_refusal_is_shown_verbatim(self):
+        """The 409 reviewer-stamp message must REACH the officer.
+
+        A download button that swallows the refusal leaves an officer believing
+        an unstamped expedited case is exportable.
+        """
+        self.assertIn("detail", self.text, "the server's own detail is rendered")
+        self.assertNotIn(
+            "alert(", self.text, "a refusal is a rendered message, not a dialog"
+        )
+
+    def test_mock_mode_disables_the_actions_with_a_reason(self):
+        self.assertIn("USE_MOCK", self.text, "mock mode is visible, not silent")
+        self.assertIn("disabled", self.text, "the actions are disabled, not hidden")
+
+    def test_page_uses_no_nonexistent_tokens(self):
+        self.assertEqual([], nonexistent_tokens(self.text))
+
+    def test_no_dollar_amounts(self):
+        self.assertIsNone(re.search(r"\$[0-9]", self.text))
+
+    def test_no_bom(self):
+        self.assertFalse(
+            detail_page().exists() and detail_page().read_bytes().startswith(b"\xef\xbb\xbf"),
+            f"pv/{CASE_DETAIL_PAGE} must have no UTF-8 BOM",
+        )
+
+    def test_queue_rows_link_to_the_detail_page(self):
+        queue = read(PV_APP / "cases" / "page.tsx")
+        self.assertIn(
+            "/pv/cases/", queue,
+            "the queue is a list of links into the case, not a dead end",
+        )
+        self.assertIn("Link", queue, "navigation uses next/link, not a bare <a>")
+
+
+class TestPvDetailClient(unittest.TestCase):
+    def setUp(self):
+        self.api = read(API_TS)
+
+    def test_detail_helpers_exported(self):
+        """Either form counts: usePvCase is a sync hook, the downloads are async."""
+        for name in PV_DETAIL_EXPORTS:
+            self.assertTrue(
+                export_block(self.api, name),
+                f"api.ts: {name} is not exported (or export_block cannot see it)",
+            )
+
+    def test_the_download_urls_are_supplied_by_the_page(self):
+        """The helpers are generic (path in, Blob out) — the CALLER knows the URL.
+
+        Pinned here because that split is deliberate: one place turns a response
+        into a file, and the page is the only thing that knows which artifact it
+        asked for.
+        """
+        page = read(detail_page())
+        for needle in ("/e2b.xml", "/print", "/api/pv/export"):
+            self.assertIn(needle, page, f"the page must request {needle}")
+        self.assertIn(
+            "/api/pv/cases/${encodeURIComponent(id)}",
+            export_block(self.api, "usePvCase"),
+            "usePvCase must read the singular case route",
+        )
+
+    def test_detail_hook_is_a_house_hook(self):
+        block = export_block(self.api, "usePvCase")
+        self.assertIn("useQuery", block, "usePvCase must be a react-query hook")
+        self.assertIn("authFetch", block, "and must read through authFetch")
+        self.assertIn("USE_MOCK", block, "and must honour the USE_MOCK policy")
+
+    def test_download_helpers_send_the_bearer(self):
+        """A download is an authed request like any other - that is the point."""
+        for name in ("authDownload", "authDownloadPost"):
+            block = export_block(self.api, name)
+            self.assertIn("Authorization", block, f"{name} must send the Bearer")
+            self.assertIn("getToken", block, f"{name} must read the stored token")
+            self.assertIn("blob", block, f"{name} must return a file, not JSON")
+
+    def test_download_helpers_surface_the_server_message(self):
+        """A refusal must arrive as {status, detail}, not as a thrown string.
+
+        Pinned on the SHARED error reader rather than twice per helper: the two
+        helpers must not grow two different ideas of what a refusal looks like,
+        because the page renders `detail` and a helper that invents its own
+        string would silently drop the server's reason.
+        """
+        reader = private_block(self.api, "downloadError")
+        self.assertTrue(reader, "api.ts: the shared downloadError reader is missing")
+        self.assertIn("detail", reader, "the reader must carry the server's detail")
+        self.assertIn("status", reader, "and the status that came with it")
+        self.assertIn("res.json", reader, "it must read the JSON body, not guess")
+        for name in ("authDownload", "authDownloadPost"):
+            block = export_block(self.api, name)
+            self.assertIn(
+                "downloadError", block,
+                f"{name} must refuse through the shared reader, not its own",
+            )
+            self.assertIn("throw", block, f"{name} must throw so the page can render it")
+
+    def test_case_fixture_imported(self):
+        self.assertRegex(
+            self.api, r"\bpvCase\s+as\s+mockPvCase",
+            "api.ts: pvCase must be imported aliased mockPvCase",
+        )
+
+
+class TestPvCaseFixture(unittest.TestCase):
+    def setUp(self):
+        self.text = read(MOCK_TS)
+
+    def test_fixture_exists(self):
+        self.assertIn("export const pvCase", self.text, "mock.ts: pvCase missing")
+
+    def test_fixture_is_a_case_with_the_review_stamp(self):
+        """A detail fixture without a reviewer stamp teaches the wrong default:
+        it would render the export gate as satisfied when it is not.
+
+        View keys, like every other fixture here (2.5): `usePvCase` returns this
+        object straight through, so it must already be a PvCaseDetailView.
+        """
+        block = const_block(self.text, "pvCase")
+        self.assertTrue(block, "pvCase block not found in mock.ts")
+        for key in ("reviewerCausality", "reviewedBy", "reviewedAt", "coding",
+                    "deadline", "e2bMinimumMet", "criteria", "expectedness",
+                    "outcome", "sourceChannel", "recordingConsent", "clinicId"):
+            self.assertIn(f"{key}:", block, f"pvCase fixture must carry {key}")
+        self.assertIn("reporterCausality:", block, "the reporter's own assessment too")
+        self.assertIn("eventOnsetDate:", block)
+        self.assertIn("notifiedAt:", block)
+
+    def test_fixture_is_itself_exportable_but_not_notified(self):
+        """The fixture must show a real stamped case, not a blocked one.
+
+        Otherwise every demo click on "E2B XML" hits the 409 gate and the page
+        looks broken rather than complete.
+        """
+        block = const_block(self.text, "pvCase")
+        self.assertIn("e2bMinimumMet: true", block)
+        self.assertIn("notifiedAt: \"\"", block, "still open, nothing sent yet")
+
+    def test_india_context_survives(self):
+        self.assertIn("+91", self.text)
+        self.assertIn("\u20b9", self.text)
 
 
 if __name__ == "__main__":

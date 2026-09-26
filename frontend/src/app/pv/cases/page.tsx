@@ -2,8 +2,12 @@
 
 // src/app/pv/cases/page.tsx — the PVOIC case queue, off GET /api/pv/cases
 // (phase-2.5, spec-micc-pv-phase25.md). Read-only: a PVOIC looks at the
-// queue, they do not change it. Case intake stays API/voice-only and the E2B
-// export is service-token guarded, so there is no write action to hang here.
+// queue, they do not change it. Case intake stays API/voice-only, so there is
+// no write action to hang here.
+//
+// Since 2.6 every row OPENS: the case id is a link to /pv/cases/{id}, which is
+// where the WHO-UMC stamp, the coding and the export actions live. A queue that
+// ends at a truncated id is a list with nowhere to go from.
 //
 // The two filters are SERVER parameters (status=, serious_only=), not a
 // client-side narrowing, so the count the officer sees is the count that
@@ -12,6 +16,7 @@
 // is an answer, never a reason to show unfiltered rows.
 import { useState } from "react";
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { Badge, type BadgeTone } from "@/components/badge";
 import { Card } from "@/components/card";
 import { StatCard } from "@/components/stat-card";
@@ -123,6 +128,7 @@ export default function PvCasesPage() {
                   <th className="pb-3 font-medium">Received</th>
                   <th className="pb-3 font-medium">Notification Deadline</th>
                   <th className="pb-3 font-medium">Status</th>
+                  <th className="pb-3 font-medium" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -130,7 +136,12 @@ export default function PvCasesPage() {
                   <tr key={c.id} className="hover:bg-white/[0.02] align-top">
                     <td className="py-4">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold text-white">{c.id}</span>
+                        <Link
+                          href={`/pv/cases/${c.id}`}
+                          className="text-sm font-bold text-white hover:text-primary-300"
+                        >
+                          {c.id}
+                        </Link>
                         <Badge tone={CASE_TONE[c.caseType] ?? "neutral"}>{c.caseType}</Badge>
                       </div>
                       {!c.e2bMinimumMet && (
@@ -172,6 +183,15 @@ export default function PvCasesPage() {
                       <Badge tone={STATUS_TONE[c.status] ?? "neutral"}>
                         {pvLabel(c.status)}
                       </Badge>
+                    </td>
+                    <td className="py-4 text-right">
+                      <Link
+                        href={`/pv/cases/${c.id}`}
+                        aria-label={`Open case ${c.id}`}
+                        className="text-slate-500 hover:text-primary-300"
+                      >
+                        →
+                      </Link>
                     </td>
                   </tr>
                 ))}

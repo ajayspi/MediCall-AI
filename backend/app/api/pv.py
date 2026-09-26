@@ -20,6 +20,16 @@ Enforcement mirrors the house pattern:
 - A serious-case pv_alert to the PVOIC mailbox is best-effort: a missing
   mailbox or SMTP key never fails an intake that has already stored the case.
 
+One route has TWO accepted callers, and the order is the whole argument.
+GET /cases/{case_id}/e2b.xml was service-token-only because its caller was a
+machine. Slice 2.6 added a staff identity as a SECOND way in without touching
+the first: the constant-time X-Service-Token compare still runs first and still
+short-circuits, and only a caller it rejects is offered get_current_user — the
+same primitive, not a copy. So an export job keeps working untouched, a PVOIC
+can finally download the artifact, and a request with neither is still 401.
+The export gate below is downstream of all of it and unchanged, which is what
+keeps a 409 for an unstamped expedited case identical for both callers.
+
 Phase-2 additions keep the same shape. Slice 2A added the E2B(R3) generator and
 the STUB gateway adapter (nothing is ever sent from this router). Slice 2E
 added the read-only PVOIC compliance views - GET /dashboard, /dashboard/psur
@@ -60,6 +70,18 @@ The same module owns the EXPEDITED EXPORT GATE that both e2b routes already
 share: a serious case that was not expected per the label cannot become an ICSR
 until a named reviewer has stamped their own causality category on it. That
 stamp is what these two routes exist to write.
+
+Slice 2.6 closed the PVOIC's last end-to-end gap - open a case, take the artifact
+away - with two small changes and no new concept:
+
+  GET /api/pv/cases/{case_id}                  - ONE case, the detail page's data
+  GET /api/pv/cases/{case_id}/e2b.xml          - + a staff identity as a 2nd caller
+
+The detail read is identity-gated and returns the same _case_row the queue, the
+print sheet and both e2b routes already build from, so a field on screen is a
+field in the export. The e2b.xml change is additive auth, described above: the
+machine path is byte-for-byte the path it was, and the browser is a guest of it,
+not its owner.
 """
 
 import base64
@@ -72,6 +94,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user
 from app.db.postgres import (
@@ -84,6 +107,7 @@ from app.db.postgres import (
     create_response,
     get_adverse_event,
     get_call,
+    get_db_session,
     get_medical_inquiry,
     get_product,
     get_quality_complaint,
@@ -919,6 +943,27 @@ async def export_pv_ep(data: PvExportRequest, user=Depends(get_current_user)):
     )
 
 
+# ─── Case detail (identity-gated) ───────────────────────────────────────────
+@router.get("/cases/{case_id}")
+async def get_pv_case_ep(case_id: str, user=Depends(get_current_user)):
+    """ONE case, in the same shape the queue, the print sheet and the E2B
+    export already use.
+
+    The PVOIC opens a case from the queue and needs the WHO-UMC stamps, the
+    coding result and the India clock on one screen. This route exists so that
+    screen has ONE source: the identical `_case_row` serializer, so a field the
+    officer sees here is the field the regulator was handed, and no UI can show
+    a case the export would not.
+
+    READ-ONLY and identity-gated, like the print sheet: viewing a captured
+    report is a staff action, never the tokenless intake path.
+    """
+    row = await get_adverse_event(_uuid(case_id, "case_id"))
+    if row is None:
+        raise HTTPException(status_code=404, detail=CASE_NOT_FOUND_DETAIL)
+    return _case_row(row)
+
+
 # ─── Print view (identity-gated) ────────────────────────────────────────────
 @router.get("/cases/{case_id}/print")
 async def print_pv_case_ep(case_id: str, user=Depends(get_current_user)):
@@ -941,8 +986,11 @@ async def print_pv_case_ep(case_id: str, user=Depends(get_current_user)):
 # Module I QMS) are deployment configuration, and a PVOIC signs off and sends.
 #
 # Gating differs by caller, deliberately:
-# - GET .../e2b.xml is SERVICE-TOKEN guarded like intake, because its caller is
-#   a machine (a safety system or an export job) holding no user session.
+# - GET .../e2b.xml is SERVICE-TOKEN guarded like intake, because its original
+#   caller is a machine (a safety system or an export job) holding no user
+#   session. Phase-2 slice 2.6 made that gate ADDITIVE: the token check runs
+#   first and unchanged, and only a caller it rejects is offered the staff
+#   identity path (see _staff_identity_or_none below).
 # - POST .../e2b is IDENTITY gated, because preparing the artifact for a
 #   regulator is a PVOIC action.
 
@@ -972,20 +1020,62 @@ async def _e2b_case(case_id: str) -> tuple:
     return row, case, str(cid)
 
 
+async def _staff_identity_or_none(request: Request, db) -> Optional[Any]:
+    """The authenticated staff member behind this request, or None.
+
+    The 2.6 identity fallback for the XML GET, and it is deliberately a CALL to
+    `get_current_user` — the same dependency every other identity-gated route in
+    this module uses — not a second copy of it. There is exactly one
+    implementation of "is this a valid session": the JWT decode, the expiry and
+    inactive-user refusals and the RLS user GUC all live in app/api/auth.py. A
+    second copy here would be a second answer to a security question, free to
+    drift from the first, and drift in the permissive direction.
+
+    `get_current_user` answers a yes/no question with a 401 or a user, and this
+    route needs the first shape to become the second. So the 401 — and only the
+    401 — is translated into None here, for the CALLER to combine with its own
+    decision. A 401 from this helper never leaves this module: the route decides
+    what an unauthenticated request looks like on its own gate, which is the
+    right to be raised. Anything else is a real failure and propagates.
+    """
+    try:
+        return await get_current_user(request, db)
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        return None
+
+
 @router.get("/cases/{case_id}/e2b.xml")
-async def get_pv_case_e2b_xml_ep(request: Request, case_id: str):
+async def get_pv_case_e2b_xml_ep(
+    request: Request,
+    case_id: str,
+    db: AsyncSession = Depends(get_db_session),
+):
     """E2B(R3)-shaped XML for ONE validated case. Nothing is submitted.
 
-    Service-token guarded exactly like intake (constant-time compare, no user
-    identity on the path). The document is generated from the Phase-1 export
-    bundle, so it mirrors the JSON/CSV exports key for key, and it is
-    deterministic: the same case always produces the same bytes, which is what
-    makes an audit trail of "what was generated" meaningful.
+    Two callers, one document, one gate. The service-token compare runs FIRST and
+    exactly as intake does it (constant-time, no session), so a safety system or
+    an export job holding only the shared token is unaffected by slice 2.6. Only
+    when that check refuses the caller does this route try a staff identity —
+    `get_current_user`, the same dependency the rest of the module gates on — so
+    a PVOIC can download the artifact from the browser. A request that carries
+    neither is 401.
+
+    Auth decides WHO is asking; `_e2b_case` decides WHETHER they may have it, and
+    it runs for both callers, so a 404 / 422 / 409 refusal is identical whoever
+    asked. The document is generated from the Phase-1 export bundle, so it
+    mirrors the JSON/CSV exports key for key, and it is deterministic: the same
+    case always produces the same bytes, which is what makes an audit trail of
+    "what was generated" meaningful.
     """
     expected = os.environ.get("WEBHOOK_SERVICE_TOKEN", "dev-service-token")
     got = request.headers.get("X-Service-Token", "")
-    if not hmac.compare_digest(got, expected):
-        raise HTTPException(status_code=401, detail="invalid or missing service token")
+    service_token_ok = hmac.compare_digest(got, expected)
+    if not service_token_ok and await _staff_identity_or_none(request, db) is None:
+        raise HTTPException(
+            status_code=401, detail="service token or staff identity required"
+        )
 
     _row, case, sender_case_id = await _e2b_case(case_id)
     xml = e2b_xml_from_case(build_e2b_case(case), sender_case_id)

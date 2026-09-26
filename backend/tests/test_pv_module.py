@@ -102,6 +102,26 @@ def fn_block(text: str, name: str) -> str:
     return "".join(lines[node.lineno - 1 : node.end_lineno])
 
 
+def fn_code(text: str, name: str) -> str:
+    """The function's EXECUTABLE body - docstring removed.
+
+    Ordering pins ("the 404 check runs before the row is serialized") must read
+    the code, not the prose: a docstring is allowed to MENTION _case_row
+    before the guard that calls it, and counting that mention would pin the
+    comment instead of the behaviour.
+    """
+    node = fns(py_tree_text(text)).get(name)
+    if node is None:
+        return ""
+    body = list(node.body)
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]
+    if not body:
+        return ""
+    lines = text.splitlines(keepends=True)
+    return "".join(lines[body[0].lineno - 1 : node.end_lineno])
+
+
 def py_tree_text(text: str):
     try:
         return ast.parse(text)
@@ -1186,6 +1206,10 @@ PV_ROUTES = {
     # identity gated; the contracts live in test_coding.py.
     ("post", "/cases/{case_id}/coding"),
     ("post", "/cases/{case_id}/causality"),
+    # Phase-2 slice 2.6: the singular case read the detail page renders. The
+    # queue is a list; this is the ONE case behind it, same _case_row shape the
+    # print sheet and both e2b routes already build from.
+    ("get", "/cases/{case_id}"),
 }
 
 SERVICE_GUARDED = ("create_pv_case_ep",)
@@ -1209,6 +1233,9 @@ IDENTITY_GATED = (
     # a logged-in session — the intake path never codes and never assesses.
     "code_pv_case_ep",
     "capture_pv_case_causality_ep",
+    # Phase-2 slice 2.6: the case detail read is a staff read of a case's own
+    # record — never reachable by the tokenless intake path.
+    "get_pv_case_ep",
 )
 
 
@@ -1286,6 +1313,21 @@ class TestPvRouter(unittest.TestCase):
         block = fn_block(self.text, "print_pv_case_ep")
         self.assertIn("render_case_html", block)
         self.assertIn("HTMLResponse", block)
+
+    def test_case_detail_route_is_the_one_case_row(self):
+        """The detail page's data source. One shape, no second serializer."""
+        block = fn_block(self.text, "get_pv_case_ep")
+        self.assertIn("_case_row", block, "detail must render the same row the queue uses")
+        self.assertIn("get_adverse_event", block)
+        self.assertIn("_uuid", block, "the id is validated, never interpolated into SQL")
+        self.assertIn("CASE_NOT_FOUND_DETAIL", block, "404 reason lives in the e2b service")
+        self.assertNotIn("service_request_ctx", block, "reading is not the intake path")
+        code = fn_code(self.text, "get_pv_case_ep")
+        self.assertLess(
+            code.index("CASE_NOT_FOUND_DETAIL"),
+            code.index("_case_row"),
+            "404 before serializing a row that does not exist",
+        )
 
     def test_router_imports_pv_service_and_db_layer(self):
         self.assertIn("from app.services.pharmacovigilance import", self.text)
