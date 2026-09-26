@@ -177,7 +177,7 @@ for verified-webhook writes).
 **Pre-existing defect surfaced (was OUT OF SCOPE, now FIXED 2026-09-26)**: `backend/postgres_schema.sql`
 had two invalid-SQL defects: (1) `CREATE TABLE call_sessions (` was never terminated — `CREATE TABLE
 payments (` was nested inside it; (2) a dangling comma on `last_heartbeat` before the closer. Fixed in
-commit `…` (see `backend/tests/test_schema_wellformed.py`, the permanent regression guard: CREATE TABLE
+commit `aabcf75` (see `backend/tests/test_schema_wellformed.py`, the permanent regression guard: CREATE TABLE
 statements must be top-level, paren-balanced, and comma-clean before `);`). This file had never been
 executable by `psql -f`; the fix unblocks the parked Docker walkthrough.
 
