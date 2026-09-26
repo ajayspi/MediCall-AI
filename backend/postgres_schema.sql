@@ -211,6 +211,109 @@ CREATE TABLE compliance_events (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ─── Pharmacovigilance / MICC (spec-micc-pv-module.md Phase 1) ──────────────
+-- The call centre is a COLLECTOR: it records what a caller reported about a
+-- medicine. These four tables hold captured facts only — no causal assessment,
+-- no clinical conclusion (that is the pharmacovigilance officer's job, done
+-- downstream of this system). All four are IF NOT EXISTS so the block can be
+-- re-applied over an existing database without a migration.
+
+-- The product dictionary a case is reported against. Identity is
+-- (clinic, name, strength, dosage form) so re-importing the same catalogue
+-- updates rather than duplicates.
+CREATE TABLE IF NOT EXISTS products (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    clinic_id UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    generic_name TEXT,
+    strength TEXT,
+    dosage_form TEXT,
+    manufacturer TEXT,
+    -- Approved label / PIL snapshot, so a case can be assessed for
+    -- expectedness against the label in force at the time of the report.
+    approved_label_json JSONB,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT uq_products_identity
+        UNIQUE (clinic_id, name, strength, dosage_form)
+);
+
+-- Individual case safety report (ICH E2B). notification_deadline is the India
+-- clock (15 calendar days serious / 90 non-serious) computed at intake from
+-- received_at, so the dashboard can rank by remaining days.
+CREATE TABLE IF NOT EXISTS adverse_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    clinic_id UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    call_id UUID REFERENCES calls(id) ON DELETE SET NULL,
+    product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+    -- hcp / consumer / caregiver — the reporter's qualification (E2B source).
+    reporter_type TEXT,
+    reporter_contact JSONB,
+    -- Patient: age OR sex OR initials is enough to open a case (E2B minimum).
+    patient_age TEXT,
+    patient_sex TEXT,
+    patient_initials TEXT,
+    -- event_text is VERBATIM caller speech, not a clinical description.
+    event_text TEXT,
+    event_onset_date DATE,
+    outcome TEXT,
+    -- ICH E2A criteria the caller reported, as a JSON array of slugs.
+    seriousness_flags JSONB,
+    expectedness TEXT,
+    -- The reporter's own words about the suspect drug. Recorded, never produced.
+    causality_reporter TEXT,
+    -- FALSE means the E2B minimum is not yet met: stored and chased, never dropped.
+    e2b_minimum_met BOOLEAN DEFAULT FALSE,
+    status TEXT DEFAULT 'new', -- new, under_review, submitted, closed
+    received_at TIMESTAMPTZ DEFAULT NOW(),
+    notification_deadline TIMESTAMPTZ,
+    notified_at TIMESTAMPTZ,
+    source_channel TEXT, -- voice, whatsapp, web
+    recording_consent TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Product quality complaint. investigation_status follows the strictly
+-- forward-only state machine in app/services/pharmacovigilance.py
+-- (captured -> investigating -> disposition -> capa); capa is terminal.
+CREATE TABLE IF NOT EXISTS quality_complaints (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    clinic_id UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    call_id UUID REFERENCES calls(id) ON DELETE SET NULL,
+    product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+    batch_no TEXT,
+    expiry DATE,
+    defect_description TEXT,
+    photos_url JSONB,
+    severity TEXT, -- minor, major, critical
+    investigation_status TEXT DEFAULT 'captured',
+    disposition TEXT,
+    capa_ref TEXT,
+    recording_consent TEXT,
+    received_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Medical information inquiry: a question about a medicine. The answer is
+-- routed to the Medical Information team, not answered by the call agent.
+CREATE TABLE IF NOT EXISTS medical_inquiries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    clinic_id UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+    call_id UUID REFERENCES calls(id) ON DELETE SET NULL,
+    product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+    question_text TEXT,
+    category TEXT, -- dosing, interactions, side_effect, indication, other
+    language TEXT,
+    response_text TEXT,
+    status TEXT DEFAULT 'open', -- open, answered, closed
+    received_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Indexes for call center performance (critical for high-concurrency workload)
 CREATE INDEX idx_calls_clinic ON calls(clinic_id);
 CREATE INDEX idx_calls_state ON calls(state);
@@ -228,6 +331,18 @@ CREATE INDEX idx_call_embeddings_call ON call_embeddings(call_id);
 CREATE INDEX idx_payments_clinic_status ON payments(clinic_id, status);
 CREATE INDEX idx_notifications_clinic_status ON notifications(clinic_id, status);
 CREATE INDEX idx_compliance_clinic_status ON compliance_events(clinic_id, status);
+CREATE INDEX IF NOT EXISTS idx_products_clinic ON products(clinic_id);
+CREATE INDEX IF NOT EXISTS idx_adverse_events_clinic_status
+    ON adverse_events(clinic_id, status);
+-- The PV dashboard's working set: the soonest submission deadline first, so an
+-- overdue serious case floats to the top of the list.
+CREATE INDEX IF NOT EXISTS idx_adverse_events_deadline
+    ON adverse_events(notification_deadline)
+    WHERE notification_deadline IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_quality_complaints_clinic_status
+    ON quality_complaints(clinic_id, investigation_status);
+CREATE INDEX IF NOT EXISTS idx_medical_inquiries_clinic_status
+    ON medical_inquiries(clinic_id, status);
 
 -- Webhook idempotency (spec-payments.md Q4/A4a): at most one intent per
 -- gateway reference, so a replayed gateway webhook updates the same row.
@@ -387,6 +502,10 @@ ALTER TABLE prescriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE compliance_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE adverse_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE quality_complaints ENABLE ROW LEVEL SECURITY;
+ALTER TABLE medical_inquiries ENABLE ROW LEVEL SECURITY;
 
 -- FORCE the flip (spec-auth-enforcement.md): the owner (medicall) must not
 -- bypass RLS once the runtime connects as medicall_app; FORCE makes the
@@ -405,6 +524,10 @@ ALTER TABLE prescriptions FORCE ROW LEVEL SECURITY;
 ALTER TABLE payments FORCE ROW LEVEL SECURITY;
 ALTER TABLE notifications FORCE ROW LEVEL SECURITY;
 ALTER TABLE compliance_events FORCE ROW LEVEL SECURITY;
+ALTER TABLE products FORCE ROW LEVEL SECURITY;
+ALTER TABLE adverse_events FORCE ROW LEVEL SECURITY;
+ALTER TABLE quality_complaints FORCE ROW LEVEL SECURITY;
+ALTER TABLE medical_inquiries FORCE ROW LEVEL SECURITY;
 
 -- Clinic owners see their own clinic data
 CREATE POLICY clinic_own_data ON clinics
@@ -516,6 +639,43 @@ CREATE POLICY compliance_manage ON compliance_events
         OR current_setting('app.service_request', true) = 'on'
     );
 
+-- Pharmacovigilance / MICC tables (spec-micc-pv-module.md): clinic staff manage
+-- their own clinic's cases, product dictionary and inquiries. The voice-agent
+-- intake path (POST /api/pv/cases, verified service token, no end-user JWT)
+-- writes under the server's service bypass, exactly like payments_manage — the
+-- caller is on the phone, not logged in.
+CREATE POLICY products_manage ON products
+    FOR ALL USING (
+        clinic_id IN (
+            SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
+        )
+        OR current_setting('app.service_request', true) = 'on'
+    );
+
+CREATE POLICY adverse_events_manage ON adverse_events
+    FOR ALL USING (
+        clinic_id IN (
+            SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
+        )
+        OR current_setting('app.service_request', true) = 'on'
+    );
+
+CREATE POLICY quality_complaints_manage ON quality_complaints
+    FOR ALL USING (
+        clinic_id IN (
+            SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
+        )
+        OR current_setting('app.service_request', true) = 'on'
+    );
+
+CREATE POLICY medical_inquiries_manage ON medical_inquiries
+    FOR ALL USING (
+        clinic_id IN (
+            SELECT clinic_id FROM clinic_users WHERE user_id = auth.uid()
+        )
+        OR current_setting('app.service_request', true) = 'on'
+    );
+
 -- Clinic memberships: users read their own rows; a clinic owner reads their
 -- clinic's rows; ONLY the server-side service path may INSERT them this phase
 -- (create_clinic assigns the creator's owner row; the future staff-add
@@ -555,6 +715,10 @@ GRANT ALL ON prescriptions TO authenticated;
 GRANT ALL ON payments TO authenticated;
 GRANT ALL ON notifications TO authenticated;
 GRANT ALL ON compliance_events TO authenticated;
+GRANT ALL ON products TO authenticated;
+GRANT ALL ON adverse_events TO authenticated;
+GRANT ALL ON quality_complaints TO authenticated;
+GRANT ALL ON medical_inquiries TO authenticated;
 GRANT USAGE, SELECT ON sequence language_codes_id_seq TO authenticated;
 
 -- Grant permissions for the API runtime role (medicall_app) — identical surface
@@ -569,6 +733,10 @@ GRANT ALL ON prescriptions TO medicall_app;
 GRANT ALL ON payments TO medicall_app;
 GRANT ALL ON notifications TO medicall_app;
 GRANT ALL ON compliance_events TO medicall_app;
+GRANT ALL ON products TO medicall_app;
+GRANT ALL ON adverse_events TO medicall_app;
+GRANT ALL ON quality_complaints TO medicall_app;
+GRANT ALL ON medical_inquiries TO medicall_app;
 GRANT SELECT ON language_codes TO medicall_app;
 GRANT USAGE, SELECT ON sequence language_codes_id_seq TO medicall_app;
 

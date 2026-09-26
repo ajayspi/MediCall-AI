@@ -189,6 +189,7 @@ project vars / CI secrets), never from git. "Where" = the file(s) that pass it.
 | `SMTP_FROM` | compose | No | noreply@medicall.in |
 | `FCM_SERVER_KEY` | compose | **Yes** | push |
 | `FCM_SENDER_ID` | compose | No | push |
+| `PV_PVOIC_EMAIL` | compose | No | PVOIC inbox for `pv_alert` deadline emails; empty = alert skipped (case still recorded) |
 
 ### DPDP Act 2023 + data residency (G6-Q2 -> G6-Q10)
 | Variable | Where | Secret? | Notes |

@@ -14,6 +14,7 @@ NOTIFICATION_KINDS = (
     "no_show_followup",
     "otp",
     "payment_receipt",
+    "pv_alert",
 )
 
 

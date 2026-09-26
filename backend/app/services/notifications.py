@@ -27,6 +27,7 @@ KINDS = (
     "no_show_followup",
     "otp",
     "payment_receipt",
+    "pv_alert",
 )
 # 5-language tuple single-sourced in app/services/languages.py (G6-Q4 Q2=A1) —
 # re-exported here so app/api/notifications.py keeps its import working.
@@ -40,6 +41,9 @@ DEFAULT_CHANNEL_ORDER = {
     "no_show_followup": ("whatsapp", "sms"),
     "otp": ("whatsapp", "sms"),
     "payment_receipt": ("email", "whatsapp"),
+    # PV safety reports are regulatory deadlines, not marketing: email-only so
+    # the alert leaves an auditable record (spec-micc-pv-module.md §6).
+    "pv_alert": ("email",),
 }
 
 # Channel env keys (single source for the router 501 gate + tests/compose).
@@ -100,6 +104,13 @@ MESSAGE_TEMPLATES = {
         "te": "{clinic} నుండి రసీదు: {amount} చెల్లింపు అందింది.",
         "bn": "{clinic} থেকে রসিদ: {amount} পেমেন্ট গৃহীত হয়েছে।",
     },
+    "pv_alert": {
+        "en": "Pharmacovigilance alert: case {case_id} must be reported by {deadline}.",
+        "hi": "फार्माकोविजिलेंस अलर्ट: केस {case_id} की रिपोर्ट {deadline} तक जरूरी है।",
+        "ta": "மருந்தக் கண்காணிப்பு எச்சரிக்கை: வழக்கு {case_id} அறிக்கை {deadline}க்குள் செய்யப்பட வேண்டும்.",
+        "te": "ఫార్మాకోవిజిలెన్స్ అలర్ట్: కేస్ {case_id} నివేదికను {deadline} లోపు చేయాలి.",
+        "bn": "ফার্মাকোভিজিলেন্স সতর্কতা: কেস {case_id}-এর রিপোর্ট {deadline} তারিখের মধ্যে জমা দিতে হবে।",
+    },
 }
 
 # Email subjects — only kinds with an email leg (Q2=A2c).
@@ -107,6 +118,7 @@ MESSAGE_SUBJECTS = {
     "payment_link": "Your {clinic} payment link",
     "appointment_reminder": "Reminder: appointment at {clinic}",
     "payment_receipt": "Receipt from {clinic}",
+    "pv_alert": "PV case {case_id} — report due {deadline}",
 }
 
 DEFAULT_FROM = "noreply@medicall.in"

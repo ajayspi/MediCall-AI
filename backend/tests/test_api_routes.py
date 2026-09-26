@@ -278,10 +278,11 @@ def included_router_attrs(tree) -> set:
 
 
 class TestMainApp(unittest.TestCase):
-    def test_main_registers_all_eleven_routers(self):
+    def test_main_registers_all_twelve_routers(self):
         """G6-Q1 added auth; G6-Q8 added notifications (eighth); G6-Q2 added
         compliance (ninth); G6-Q9 added analytics (tenth, spec-kpis-q9.md);
-        G6-Q11 added admin (eleventh, spec-frontend-wiring-q11.md)."""
+        G6-Q11 added admin (eleventh, spec-frontend-wiring-q11.md); the MICC/PV
+        module added pv (twelfth, spec-micc-pv-module.md)."""
         tree = py_tree(MAIN)
         included = included_router_attrs(tree)
         self.assertEqual(
@@ -297,9 +298,10 @@ class TestMainApp(unittest.TestCase):
                 "compliance",
                 "analytics",
                 "admin",
+                "pv",
             },
             included,
-            f"main.py must include_router all 11; got {sorted(included)}",
+            f"main.py must include_router all 12; got {sorted(included)}",
         )
 
     def test_main_voice_keeps_api_voice_prefix(self):

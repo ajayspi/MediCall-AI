@@ -289,12 +289,12 @@ def async_defined(tree) -> set:
 
 class TestAdminRouter(unittest.TestCase):
     def test_admin_router_registered_eleventh(self):
-        """main.py must include_router all 11 (voice/auth/clinics/calls/
-        appointments/prescriptions/payments/notifications/compliance/analytics/admin)."""
+        """main.py must include_router admin (eleventh). The twelfth router
+        (pv, spec-micc-pv-module.md) is asserted by test_pv_module.py."""
         included = included_router_attrs(py_tree(MAIN))
         self.assertEqual(
             KNOWN_ROUTERS | {"admin"},
-            included,
+            included - {"pv"},
             f"main.py must include_router all 11; got {sorted(included)}",
         )
 

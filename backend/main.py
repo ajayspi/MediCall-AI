@@ -19,6 +19,7 @@ from app.api import (
     notifications,
     payments,
     prescriptions,
+    pv,
     voice,
 )
 from app.db.postgres import init_db
@@ -62,6 +63,7 @@ app.include_router(notifications.router)
 app.include_router(compliance.router)
 app.include_router(analytics.router)
 app.include_router(admin.router)
+app.include_router(pv.router)
 app.include_router(
     auth.router, prefix="/api/auth", tags=["auth"]
 )

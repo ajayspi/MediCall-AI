@@ -24,6 +24,7 @@ from app.services.retention import retention_deadline
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -617,6 +618,216 @@ class ComplianceEvent(Base):
         )
 
 
+# ─── Pharmacovigilance / MICC models (spec-micc-pv-module.md) ──────────────
+# The call centre is a COLLECTOR: these rows hold what a caller reported about
+# a medicine, never a clinical conclusion. Matching postgres_schema.sql.
+
+
+class Product(Base):
+    """Product dictionary a PV case is reported against."""
+
+    __tablename__ = "products"
+    __table_args__ = (
+        UniqueConstraint(
+            "clinic_id",
+            "name",
+            "strength",
+            "dosage_form",
+            name="uq_products_identity",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("clinics.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    generic_name: Mapped[Optional[str]] = mapped_column(String(255))
+    strength: Mapped[Optional[str]] = mapped_column(String(60))
+    dosage_form: Mapped[Optional[str]] = mapped_column(String(60))
+    manufacturer: Mapped[Optional[str]] = mapped_column(String(255))
+    # Approved label snapshot in force at the time of the report — the basis
+    # for the expectedness call, which the officer makes downstream.
+    approved_label_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz, onupdate=now_tz
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<Product id={self.id} name={self.name} "
+            f"strength={self.strength} clinic={self.clinic_id}>"
+        )
+
+
+class AdverseEvent(Base):
+    """Individual case safety report (ICH E2B minimum) from a call."""
+
+    __tablename__ = "adverse_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("clinics.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    call_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("calls.id", ondelete="SET NULL"), nullable=True
+    )
+    product_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("products.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # hcp / consumer / caregiver — the reporter's qualification (E2B source).
+    reporter_type: Mapped[Optional[str]] = mapped_column(String(40))
+    reporter_contact: Mapped[Optional[dict]] = mapped_column(JSONB)
+    patient_age: Mapped[Optional[str]] = mapped_column(String(20))
+    patient_sex: Mapped[Optional[str]] = mapped_column(String(20))
+    patient_initials: Mapped[Optional[str]] = mapped_column(String(20))
+    # VERBATIM caller speech — not a clinical description.
+    event_text: Mapped[Optional[str]] = mapped_column(Text)
+    event_onset_date: Mapped[Optional[Any]] = mapped_column(Date)
+    outcome: Mapped[Optional[str]] = mapped_column(String(40))
+    # ICH E2A criteria the caller reported, as a list of canonical slugs.
+    seriousness_flags: Mapped[list] = mapped_column(JSONB, default=list)
+    expectedness: Mapped[Optional[str]] = mapped_column(String(40))
+    # The reporter's own words about the suspect drug. Recorded, never produced.
+    causality_reporter: Mapped[Optional[str]] = mapped_column(Text)
+    # FALSE = E2B minimum not yet met: stored and chased, never dropped.
+    e2b_minimum_met: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(30), default="new")
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz
+    )
+    # India clock at intake: 15 calendar days serious, 90 non-serious.
+    notification_deadline: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+    notified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+    source_channel: Mapped[Optional[str]] = mapped_column(String(30))
+    recording_consent: Mapped[Optional[str]] = mapped_column(String(30))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz, onupdate=now_tz
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<AdverseEvent id={self.id} clinic={self.clinic_id} "
+            f"status={self.status} e2b={self.e2b_minimum_met}>"
+        )
+
+
+class QualityComplaint(Base):
+    """Product quality complaint (EU GMP Ch. 8 defect + investigation)."""
+
+    __tablename__ = "quality_complaints"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("clinics.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    call_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("calls.id", ondelete="SET NULL"), nullable=True
+    )
+    product_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("products.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    batch_no: Mapped[Optional[str]] = mapped_column(String(60))
+    expiry: Mapped[Optional[Any]] = mapped_column(Date)
+    defect_description: Mapped[Optional[str]] = mapped_column(Text)
+    photos_url: Mapped[Optional[dict]] = mapped_column(JSONB)
+    severity: Mapped[Optional[str]] = mapped_column(String(20))
+    # captured -> investigating -> disposition -> capa (forward-only, capa is
+    # terminal) — enforced by pharmacovigilance.next_pqc_status.
+    investigation_status: Mapped[str] = mapped_column(
+        String(30), default="captured"
+    )
+    disposition: Mapped[Optional[str]] = mapped_column(Text)
+    capa_ref: Mapped[Optional[str]] = mapped_column(String(120))
+    recording_consent: Mapped[Optional[str]] = mapped_column(String(30))
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz, onupdate=now_tz
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<QualityComplaint id={self.id} product={self.product_id} "
+            f"status={self.investigation_status}>"
+        )
+
+
+class MedicalInquiry(Base):
+    """Medical information inquiry — a question about a medicine."""
+
+    __tablename__ = "medical_inquiries"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("clinics.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    call_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("calls.id", ondelete="SET NULL"), nullable=True
+    )
+    product_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("products.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    question_text: Mapped[Optional[str]] = mapped_column(Text)
+    # dosing, interactions, side_effect, indication, other
+    category: Mapped[Optional[str]] = mapped_column(String(40))
+    language: Mapped[Optional[str]] = mapped_column(String(5))
+    response_text: Mapped[Optional[str]] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="open")
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_tz, onupdate=now_tz
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<MedicalInquiry id={self.id} product={self.product_id} "
+            f"status={self.status} lang={self.language}>"
+        )
+
+
 # ─── Session Management ────────────────────────────────────────────────────
 
 
@@ -1076,6 +1287,214 @@ async def update_payment_status(payment_id: uuid.UUID, status: str) -> bool:
         result = await session.execute(stmt)
         await session.commit()
         return result.scalar_one_or_none() is not None
+
+
+# ─── PV / MICC CRUD (spec-micc-pv-module.md) ────────────────────────────────
+# Thin persistence only: every rule (classification, the E2B minimum, the
+# ICH E2A flags, the India clock, the complaint state machine) lives in
+# app/services/pharmacovigilance.py, so it is testable without a database.
+
+
+async def create_product(
+    clinic_id: uuid.UUID,
+    name: str,
+    generic_name: Optional[str] = None,
+    strength: Optional[str] = None,
+    dosage_form: Optional[str] = None,
+    manufacturer: Optional[str] = None,
+    approved_label_json: Optional[dict] = None,
+) -> Product:
+    """Add a product to a clinic's dictionary (uq_products_identity dedupes)."""
+    async with SessionFactory() as session:
+        stmt = (
+            insert(Product)
+            .values(
+                clinic_id=clinic_id,
+                name=name,
+                generic_name=generic_name,
+                strength=strength,
+                dosage_form=dosage_form,
+                manufacturer=manufacturer,
+                approved_label_json=approved_label_json,
+            )
+            .returning(Product)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one()
+
+
+async def find_product(
+    clinic_id: uuid.UUID, name: str
+) -> Optional[Product]:
+    """Look a product up by name within a clinic (catalogue re-import)."""
+    async with SessionFactory() as session:
+        stmt = select(Product).where(
+            Product.clinic_id == clinic_id, Product.name == name
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+
+async def list_products(
+    clinic_id: uuid.UUID, is_active: Optional[bool] = None
+) -> list[Product]:
+    """List a clinic's product dictionary, name order."""
+    async with SessionFactory() as session:
+        query = select(Product).where(Product.clinic_id == clinic_id)
+        if is_active is not None:
+            query = query.where(Product.is_active.is_(is_active))
+        query = query.order_by(Product.name)
+        result = await session.execute(query)
+        return list(result.scalars().all())
+
+
+async def create_adverse_event(clinic_id: uuid.UUID, **fields) -> AdverseEvent:
+    """Persist one individual case safety report.
+
+    `fields` carries what the intake endpoint resolved: the E2B minimum result,
+    the ICH E2A flags, the computed notification_deadline and the parent call.
+    """
+    async with SessionFactory() as session:
+        stmt = (
+            insert(AdverseEvent)
+            .values(clinic_id=clinic_id, **fields)
+            .returning(AdverseEvent)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one()
+
+
+async def get_adverse_event(case_id: uuid.UUID) -> Optional[AdverseEvent]:
+    """Get one adverse event by ID."""
+    async with SessionFactory() as session:
+        return await session.get(AdverseEvent, case_id)
+
+
+async def list_adverse_events(
+    clinic_id: uuid.UUID,
+    status: Optional[str] = None,
+    serious_only: bool = False,
+    limit: int = 50,
+) -> list[AdverseEvent]:
+    """List a clinic's cases, SOONEST SUBMISSION DEADLINE FIRST.
+
+    The PV dashboard's working order: an overdue serious case must float to
+    the top, which created_at-descending would bury.
+    """
+    async with SessionFactory() as session:
+        query = select(AdverseEvent).where(AdverseEvent.clinic_id == clinic_id)
+        if status:
+            query = query.where(AdverseEvent.status == status)
+        query = query.order_by(
+            AdverseEvent.notification_deadline.asc(),
+            AdverseEvent.received_at.desc(),
+        )
+        result = await session.execute(query)
+        rows = list(result.scalars().all())
+        if serious_only:
+            rows = [r for r in rows if r.seriousness_flags]
+        return rows[: max(1, min(limit, 200))]
+
+
+async def create_quality_complaint(
+    clinic_id: uuid.UUID, **fields
+) -> QualityComplaint:
+    """Persist one product quality complaint (defect, batch, photos)."""
+    async with SessionFactory() as session:
+        stmt = (
+            insert(QualityComplaint)
+            .values(clinic_id=clinic_id, **fields)
+            .returning(QualityComplaint)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one()
+
+
+async def get_quality_complaint(complaint_id: uuid.UUID) -> Optional[QualityComplaint]:
+    """Get one quality complaint by ID."""
+    async with SessionFactory() as session:
+        return await session.get(QualityComplaint, complaint_id)
+
+
+async def list_quality_complaints(
+    clinic_id: uuid.UUID, investigation_status: Optional[str] = None
+) -> list[QualityComplaint]:
+    """List a clinic's complaints, newest first, optional status filter."""
+    async with SessionFactory() as session:
+        query = select(QualityComplaint).where(
+            QualityComplaint.clinic_id == clinic_id
+        )
+        if investigation_status:
+            query = query.where(
+                QualityComplaint.investigation_status == investigation_status
+            )
+        query = query.order_by(QualityComplaint.created_at.desc())
+        result = await session.execute(query)
+        return list(result.scalars().all())
+
+
+async def update_quality_complaint(
+    complaint_id: uuid.UUID,
+    investigation_status: Optional[str] = None,
+    disposition: Optional[str] = None,
+    capa_ref: Optional[str] = None,
+) -> bool:
+    """Move a complaint forward. The caller MUST have validated the step.
+
+    Only what is passed is written, so a disposition-only PATCH cannot
+    silently reset the state machine. Returns True if a row was updated.
+    """
+    values: dict[str, Any] = {}
+    if investigation_status is not None:
+        values["investigation_status"] = investigation_status
+    if disposition is not None:
+        values["disposition"] = disposition
+    if capa_ref is not None:
+        values["capa_ref"] = capa_ref
+    if not values:
+        return False
+    values["updated_at"] = now_tz()
+    async with SessionFactory() as session:
+        stmt = (
+            update(QualityComplaint)
+            .where(QualityComplaint.id == complaint_id)
+            .values(**values)
+            .returning(QualityComplaint.id)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one_or_none() is not None
+
+
+async def create_medical_inquiry(clinic_id: uuid.UUID, **fields) -> MedicalInquiry:
+    """Persist one medical information inquiry for the MI team."""
+    async with SessionFactory() as session:
+        stmt = (
+            insert(MedicalInquiry)
+            .values(clinic_id=clinic_id, **fields)
+            .returning(MedicalInquiry)
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        return result.scalar_one()
+
+
+async def list_medical_inquiries(
+    clinic_id: uuid.UUID, status: Optional[str] = None
+) -> list[MedicalInquiry]:
+    """List a clinic's inquiries, newest first, optional status filter."""
+    async with SessionFactory() as session:
+        query = select(MedicalInquiry).where(
+            MedicalInquiry.clinic_id == clinic_id
+        )
+        if status:
+            query = query.where(MedicalInquiry.status == status)
+        query = query.order_by(MedicalInquiry.created_at.desc())
+        result = await session.execute(query)
+        return list(result.scalars().all())
 
 
 async def create_notification(
