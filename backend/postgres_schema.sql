@@ -152,8 +152,10 @@ CREATE TABLE call_sessions (
     livekit_participant_id TEXT, -- Remote participant ID (caller/agent)
     status TEXT DEFAULT 'idle', -- idle, recording, in_progress, completed, failed
     started_at TIMESTAMPTZ DEFAULT NOW(),
-    last_heartbeat TIMESTAMPTZ DEFAULT NOW(),
-    CREATE TABLE payments (
+    last_heartbeat TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE payments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     clinic_id UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
     call_id UUID REFERENCES calls(id) ON DELETE SET NULL,

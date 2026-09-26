@@ -161,7 +161,26 @@ for verified-webhook writes).
 | **MI caller asks for personal medical advice** | Agent/dashboard must not answer | Research doc 8.01 rule → MI path returns approved-content or `NO_MEDICAL_ADVICE` + human follow-up; guardrails already forbid diagnosis/dosage claims |
 | **Parked Docker blocker (livekit/openai)** | Full-stack smoke blocked end-to-end | Module is stdlib-only + unit-testable headless; does not worsen the resolver; Docker walkthrough resumes independently |
 
+## Final State (post-implementation — workflow step 6, 2026-09-26)
+
+**Implemented and committed**: `c66fc9b` — `feat(pv): MICC pharmacovigilance module - 4 tables, stdlib PV service, /api/pv router (686/686)`.
+
+**Gates (verified by scheduler re-run, not just reported)**:
+- `py -3.14 -m unittest discover -s tests -p "test_*.py"` → **686 tests, OK, exit 0** (580 pre-existing + 106 new PV)
+- `py -3.14 -m compileall .` → **exit 0**
+- `backend/requirements.txt` byte-identical to parked state (only the pre-existing parked edits remain unstaged); docker-compose/livekit untouched
+
+**Delivered**: 4 tables + 5 indexes + RLS ENABLE/FORCE + 4 `_manage` policies + GRANTs (`postgres_schema.sql`); 4 SQLAlchemy 2.0 models + 12 repo helpers (`postgres.py`); `services/pharmacovigilance.py` (stdlib-only: classification 5 languages, minimum criteria, E2A seriousness, 15/90-day clocks, PQC transitions, E2B groups, CSV/HTML export); `api/pv.py` (7 routes incl. service-token intake + `compliance_events` audit); router registered in `main.py` (12th); `pv_alert` notification kind (email-only channel, `PV_PVOIC_EMAIL` env); `.env.example` + `docs/DEPLOYMENT.md` updated.
+
+**Recorded deviations**: (1) `STDLIB_ROOTS` whitelist gained `html` (pre-existing whitelist omission of a genuine stdlib module; gate intent — no third-party imports — preserved); (2) `_verify_service_token` inlined in `create_pv_case_ep` (constant-time guard per test contract; DRY loss accepted); (3) two exact-set router-count tests extended to 12 via `included - {"pv"}`; (4) test-helper bugs fixed before they could falsify RED/GREEN (walrus-in-kwarg SyntaxError, mixed-script Hindi vector, Saturday=5 weekday).
+
+**Pre-existing defect surfaced (was OUT OF SCOPE, now FIXED 2026-09-26)**: `backend/postgres_schema.sql`
+had two invalid-SQL defects: (1) `CREATE TABLE call_sessions (` was never terminated — `CREATE TABLE
+payments (` was nested inside it; (2) a dangling comma on `last_heartbeat` before the closer. Fixed in
+commit `…` (see `backend/tests/test_schema_wellformed.py`, the permanent regression guard: CREATE TABLE
+statements must be top-level, paren-balanced, and comma-clean before `);`). This file had never been
+executable by `psql -f`; the fix unblocks the parked Docker walkthrough.
+
 ## Spec Status
-**Status**: **APPROVED — 2026-09-26** (user sign-off via "continue"). Implementation dispatched to a
-fresh session per workflow step 5. This file will be updated with the final state after
-implementation + verify (workflow step 6).
+**Status**: **APPROVED → IMPLEMENTED & VERIFIED — 2026-09-26** (fresh-session implementation per workflow
+step 5; scheduler re-ran the gates per verify-before-done; final state above).
