@@ -12,6 +12,8 @@ Verified by `backend/tests/test_uml_diagrams.py` (stdlib, source-level).
 | 04 | Voice pipeline data flow | [04-data-flow.md](04-data-flow.md) | `backend/app/api/voice.py` + `backend/app/services/` |
 | 05 | Deployment (Docker Compose stack + SaaS) | [05-deployment.md](05-deployment.md) | `docker-compose.yml` |
 | 06 | Inbound call lifecycle (sequence) | [06-call-lifecycle.md](06-call-lifecycle.md) | `backend/app/api/voice.py` + `backend/app/models/call.py` |
+| 07 | Use cases (actors + goals) | [07-use-cases.md](07-use-cases.md) | `backend/postgres_schema.sql` roles + `backend/app/services/guardrails.py` |
+| 08 | Class diagram (domain + DTOs) | [08-class-diagram.md](08-class-diagram.md) | `backend/app/models/call.py` + `backend/app/schemas/` |
 
 ## Why these six
 
