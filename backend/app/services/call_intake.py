@@ -457,7 +457,14 @@ AGE_PATTERNS: Dict[str, Tuple[Tuple[str, str], ...]] = {
     ),
 }
 
-# English number words, spoken far more often than digits on a phone call.
+# English number words
+
+# Cross-language age pattern for code-switched calls
+CROSS_LANG_AGE_PATTERN = re.compile(
+    r"(\d+)\s*(?:years?|yrs?|months?)\s*(?:old|saal|vars|varsham|\u0938\u094d|\u092c\u094d|\u0ca8\u0127)",
+    re.IGNORECASE,
+)
+
 ENGLISH_NUMBERS: Dict[str, int] = {
     "one": 1,
     "two": 2,
@@ -577,7 +584,7 @@ _ASCII_PHRASE_RE = re.compile(r"^[\x20-\x7e]+$")
 
 # Lookback window after a label word, and where a value may stop (a sentence
 # boundary). Bounded so a label can never harvest the rest of the call.
-_VALUE_WINDOW = 48
+_VALUE_WINDOW = 64
 
 
 # ─── In-language follow-up questions ────────────────────────────────────────
@@ -842,6 +849,46 @@ def _search_languages(language: Any) -> Tuple[str, ...]:
     return ("en",)
 
 
+def _detect_languages(transcript: str) -> Tuple[str, ...]:
+    """Detect which languages are present in the transcript.
+
+    Scans the transcript for characters/scripts from each of the 5 supported
+    PV languages (hi, en, ta, te, bn) and returns the detected ones.
+    Used by detect_intent to set the languages variable for code-switched calls.
+    """
+    if not transcript:
+        return ("en",)
+
+    text = str(transcript)
+    detected: set = set()
+
+    # Check for English (ASCII letters)
+    if any(c.isascii() and c.isalpha() for c in text):
+        detected.add("en")
+
+    # Check for Devanagari (Hindi)
+    if any("\u0900" <= c <= "\u097f" for c in text):
+        detected.add("hi")
+
+    # Check for Tamil
+    if any("\u0b80" <= c <= "\u0bff" for c in text):
+        detected.add("ta")
+
+    # Check for Telugu
+    if any("\u0c00" <= c <= "\u0c7f" for c in text):
+        detected.add("te")
+
+    # Check for Bengali
+    if any("\u0980" <= c <= "\u09ff" for c in text):
+        detected.add("bn")
+
+    # Default to English if nothing detected
+    if not detected:
+        detected.add("en")
+
+    return tuple(sorted(detected))
+
+
 def _normalize(text: Any) -> str:
     """Native digits -> ASCII, whitespace collapsed. Case is PRESERVED.
 
@@ -854,14 +901,38 @@ def _normalize(text: Any) -> str:
 
 
 def _contains(haystack: str, needle: str) -> bool:
-    """Plain substring, case-folded - the Phase-1 `_phrase_hits` rule.
+    """Plain substring, case-folded - the Phase-1 _phrase_hits rule.
 
     Reserved for ROUTING evidence, where mirroring Phase-1's own substring
     semantics is the whole point: a phrase this module claims decided the route
     must be a phrase the endpoint's classifier actually matched. Every other
-    lookup wants `_mentions` instead.
+    lookup wants _mentions instead.
     """
     return bool(needle) and needle.casefold() in haystack.casefold()
+
+def _detect_special_situation_advanced(text: str, languages: Tuple[str, ...]) -> List[str]:
+    """Detect special situations with contextual awareness."""
+    detected = []
+    text_lower = text.lower()
+    
+    for situation, lang_phrases in SPECIAL_SITUATION_PHRASES.items():
+        for lang, phrases in lang_phrases.items():
+            if lang not in languages:
+                continue
+            for phrase in phrases:
+                phrase_lower = phrase.lower()
+                if phrase_lower in text_lower:
+                    phrase_start = text_lower.find(phrase_lower)
+                    if phrase_start == -1:
+                        continue
+                    start = max(0, phrase_start - 20)
+                    end = min(len(text_lower), phrase_start + len(phrase) + 20)
+                    context = text_lower[start:end]
+                    medicine_terms = ["medicine", "drug", "tablet", "pill", "medication"]
+                    nearby_med = any(m in context for m in medicine_terms)
+                    if nearby_med or phrase_lower in context.split():
+                        if situation not in detected:
+                            detected.append(situation)
 
 
 @functools.lru_cache(maxsize=2048)
@@ -884,6 +955,26 @@ def _phrase_re(phrase: str) -> "re.Pattern[str]":
     return re.compile(re.escape(phrase), re.IGNORECASE)
 
 
+
+def _normalize_advanced(text: str, languages: Tuple[str, ...] = None) -> str:
+    """Normalize transcript with language-aware processing."""
+    if text is None:
+        return ""
+    
+    text = str(text).translate(DIGIT_TRANSLATION)
+    
+    has_latin = any(c.isascii() and c.isalpha() for c in text)
+    has_devanagari = any('\u0900' <= c <= '\u097f' for c in text)
+    has_tamil = any('\u0b80' <= c <= '\u0bff' for c in text)
+    has_telugu = any('\u0c00' <= c <= '\u0c7f' for c in text)
+    has_bengali = any('\u0980' <= c <= '\u09ff' for c in text)
+    
+    if has_latin and not any([has_devanagari, has_tamil, has_telugu, has_bengali]):
+        text = " ".join(text.split())
+    else:
+        text = re.sub(r"\n{3,}", "\n\n", text)
+    
+    return text
 def _label_match(text: str, phrase: str):
     """The first word-aware match of a label word, or None.
 
@@ -892,6 +983,53 @@ def _label_match(text: str, phrase: str):
     """
     return _phrase_re(phrase).search(text) if phrase else None
 
+
+def _phrase_match_score(text: str, phrase: str) -> float:
+    """Return a confidence score (0-1) for a phrase match."""
+    if not phrase or not text:
+        return 0.0
+    
+    if _ASCII_PHRASE_RE.match(phrase):
+        pattern = rf"\b{re.escape(phrase)}\b"
+        matches = len(re.findall(pattern, text, re.IGNORECASE))
+        if matches == 0:
+            return 0.0
+        is_boundary = True
+        for m in re.finditer(pattern, text, re.IGNORECASE):
+            start = m.start()
+            end = m.end()
+            before_ok = start == 0 or text[start-1] in " \t\n\r\f.,;:!?"
+            after_ok = end == len(text) or text[end] in " \t\n\r\f.,;?!"
+            if not (before_ok and after_ok):
+                is_boundary = False
+                break
+        base = min(matches / max(1, text.count(phrase.lower())), 1.0)
+        boundary_bonus = 0.1 if is_boundary else 0.0
+        return min(base + boundary_bonus, 1.0)
+    
+    text_lower = text.lower()
+    phrase_lower = phrase.lower()
+    idx = text_lower.find(phrase_lower)
+    if idx == -1:
+        return 0.0
+    
+    position_penalty = abs(idx / len(text) - 0.5) * 0.3
+    before_char = text[idx-1] if idx > 0 else None
+    after_char = text[idx + len(phrase)] if idx + len(phrase) < len(text) else None
+    word_boundary = (
+        before_char is None or before_char in " \t\n\r\f.,;:!?)",
+        after_char is None or after_char in " \t\n\r\f.,;?!"
+    )
+    boundary_bonus = 0.1 if all(word_boundary) else 0.0
+    length_bonus = min(len(phrase) / 20.0, 0.3)
+    
+    return min(0.5 + boundary_bonus + length_bonus - position_penalty, 1.0)
+
+
+def is_confident_match(text: str, phrase: str, language: str, threshold: float = 0.6) -> bool:
+    """Check if a phrase match meets the confidence threshold."""
+    score = _phrase_match_score(text, phrase)
+    return score >= threshold
 
 def _mentions(text: str, phrase: str) -> bool:
     """Is `phrase` in `text` as a whole word (see `_phrase_re` for the split)?"""
@@ -937,11 +1075,23 @@ def _window_after(text: str, end: int) -> str:
 
 # ─── Field extractors (fixed scan order = deterministic output) ──────────────
 def _extract_age(text: str, languages: Tuple[str, ...]) -> str:
+    # Try language-specific patterns first
     for language in languages:
         for pattern, unit in AGE_PATTERNS.get(language, ()):
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 return match.group(1) if unit == "years" else f"{match.group(1)} months"
+    
+    # Try cross-language pattern for code-switched calls
+    match = CROSS_LANG_AGE_PATTERN.search(text)
+    if match:
+        count = int(match.group(1))
+        rest = text[match.end():].lower()
+        if "month" in rest or "माह" in rest or "മാസം" in rest or "月" in rest:
+            return f"{count} months"
+        else:
+            return f"{count} years"
+    
     return ""
 
 
@@ -1025,7 +1175,10 @@ def _extract_batch(text: str, languages: Tuple[str, ...]) -> str:
                 continue
             value = BATCH_VALUE_RE.match(_window_after(text, match.end()).lstrip())
             if value and re.search(r"\d", value.group(0)):
-                return value.group(0)
+                val_text = value.group(0)
+                alnum_ratio = sum(1 for c in val_text if c.isalnum()) / len(val_text) if val_text else 0
+                if alnum_ratio >= 0.3:
+                    return value.group(0)
     return ""
 
 
@@ -1162,8 +1315,15 @@ def detect_intent(transcript: Any, language: str = "en") -> Dict[str, Any]:
     carries the evidence (which phrases decided it) and the LLM function the
     agent would call, so a routing decision is auditable after the fact.
     """
+    # Detect all languages in the transcript
+    languages = _detect_languages(transcript)
+    
     contact = classify_contact_type(transcript, language)
     intent = CONTACT_TO_INTENT.get(contact, "none")
+    
+    # Enhanced evidence with special situation detection
+    special_situations = _detect_special_situation_advanced(transcript, languages)
+    
     return {
         "intent": intent,
         "contact_type": contact,
@@ -1171,6 +1331,8 @@ def detect_intent(transcript: Any, language: str = "en") -> Dict[str, Any]:
         "language": _language(language),
         "is_pv_intent": intent != "none",
         "matched_phrases": _routing_evidence(_normalize(transcript), contact, language),
+        "special_situations": special_situations,  # NEW
+        "detected_languages": languages,  # NEW
     }
 
 
